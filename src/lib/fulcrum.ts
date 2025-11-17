@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-const FULCRUM_URL = 'ws://192.168.88.17:80';
+const FULCRUM_URL = import.meta.env.FULCRUM_WS_URL;
 
 interface ElectrumResponse {
 	jsonrpc: string;

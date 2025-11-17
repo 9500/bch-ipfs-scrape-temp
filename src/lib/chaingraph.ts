@@ -1,4 +1,4 @@
-const CHAINGRAPH_URL = 'http://192.168.88.105:8088/v1/graphql';
+const CHAINGRAPH_URL = import.meta.env.CHAINGRAPH_URL;
 
 interface GraphQLResponse {
 	data?: any;

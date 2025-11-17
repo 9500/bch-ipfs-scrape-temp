@@ -115,7 +115,7 @@ function formatBCH(satoshis: string | number): string {
 <script>
 	import { createClient } from 'graphql-ws';
 
-	const GRAPHQL_WS_URL = 'ws://192.168.88.105:8088/v1/graphql';
+	const GRAPHQL_WS_URL = import.meta.env.PUBLIC_CHAINGRAPH_WS_URL;
 
 	// Helper functions (mirroring server-side)
 	function formatHash(hash) {
