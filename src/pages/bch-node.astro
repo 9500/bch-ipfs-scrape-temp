@@ -1,0 +1,203 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { getBCHNData } from '../lib/bchn';
+
+let data = null;
+let error = null;
+
+try {
+	data = await getBCHNData();
+} catch (e: any) {
+	error = e.message || 'Failed to connect to Bitcoin Cash Node';
+}
+---
+
+<MainLayout title="BCH Node">
+	<h2>Bitcoin Cash Node Status</h2>
+
+	{error ? (
+		<section class="error-section">
+			<h3>⚠️ Error</h3>
+			<p class="error-message">{error}</p>
+			<p class="error-detail">Unable to fetch data from BCHN at 192.168.88.17:8332</p>
+		</section>
+	) : (
+		<>
+			<section class="status-section">
+				<h3>Network Information</h3>
+				<div class="info-grid">
+					<div class="info-card">
+						<span class="info-label">Chain</span>
+						<span class="info-value">{data.chain}</span>
+					</div>
+					<div class="info-card">
+						<span class="info-label">Block Height</span>
+						<span class="info-value highlight">{data.blocks.toLocaleString()}</span>
+					</div>
+					<div class="info-card">
+						<span class="info-label">Headers</span>
+						<span class="info-value">{data.headers.toLocaleString()}</span>
+					</div>
+					<div class="info-card">
+						<span class="info-label">Connections</span>
+						<span class="info-value">{data.connections}</span>
+					</div>
+				</div>
+			</section>
+
+			<section class="status-section">
+				<h3>Mempool Status</h3>
+				<div class="info-grid">
+					<div class="info-card">
+						<span class="info-label">Transactions</span>
+						<span class="info-value highlight">{data.mempoolSize.toLocaleString()}</span>
+					</div>
+					<div class="info-card">
+						<span class="info-label">Size (bytes)</span>
+						<span class="info-value">{(data.mempoolBytes / 1024).toFixed(2)} KB</span>
+					</div>
+				</div>
+			</section>
+
+			<section class="status-section">
+				<h3>Node Details</h3>
+				<div class="detail-list">
+					<div class="detail-item">
+						<span class="detail-label">Version:</span>
+						<span class="detail-value">{data.version}</span>
+					</div>
+					<div class="detail-item">
+						<span class="detail-label">Subversion:</span>
+						<span class="detail-value">{data.subversion}</span>
+					</div>
+					<div class="detail-item">
+						<span class="detail-label">Difficulty:</span>
+						<span class="detail-value">{data.difficulty.toExponential(4)}</span>
+					</div>
+				</div>
+			</section>
+
+			<div class="refresh-note">
+				<p>💡 Data fetched in real-time. Refresh the page to get updated information.</p>
+			</div>
+		</>
+	)}
+</MainLayout>
+
+<style>
+	.error-section {
+		background: #3d1f1f;
+		border: 1px solid #5c2828;
+		border-left: 4px solid #d32f2f;
+		padding: 24px;
+		border-radius: 8px;
+		margin-bottom: 24px;
+	}
+
+	.error-section h3 {
+		margin-top: 0;
+		color: #ff6b6b;
+	}
+
+	.error-message {
+		font-size: 16px;
+		color: #ffcdd2;
+		margin-bottom: 8px;
+	}
+
+	.error-detail {
+		font-size: 14px;
+		color: #a0a0a0;
+		margin: 0;
+	}
+
+	.status-section {
+		background: #2d2d2d;
+		padding: 24px;
+		border-radius: 8px;
+		border: 1px solid #3a3a3a;
+		margin-bottom: 24px;
+	}
+
+	.status-section h3 {
+		margin-top: 0;
+		margin-bottom: 20px;
+		color: #ffffff;
+		font-size: 18px;
+	}
+
+	.info-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 16px;
+	}
+
+	.info-card {
+		background: #1a1a1a;
+		padding: 20px;
+		border-radius: 6px;
+		border: 1px solid #3a3a3a;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.info-label {
+		font-size: 12px;
+		color: #a0a0a0;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.info-value {
+		font-size: 24px;
+		font-weight: 600;
+		color: #e0e0e0;
+	}
+
+	.info-value.highlight {
+		color: #667eea;
+	}
+
+	.detail-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.detail-item {
+		background: #1a1a1a;
+		padding: 16px;
+		border-radius: 6px;
+		border: 1px solid #3a3a3a;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.detail-label {
+		font-size: 14px;
+		color: #a0a0a0;
+		font-weight: 500;
+	}
+
+	.detail-value {
+		font-size: 14px;
+		color: #e0e0e0;
+		font-family: 'Courier New', monospace;
+	}
+
+	.refresh-note {
+		background: #2d2d2d;
+		border: 1px solid #3a3a3a;
+		border-radius: 8px;
+		padding: 16px;
+		text-align: center;
+	}
+
+	.refresh-note p {
+		margin: 0;
+		color: #a0a0a0;
+		font-size: 14px;
+	}
+</style>
