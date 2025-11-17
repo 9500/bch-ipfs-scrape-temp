@@ -174,34 +174,65 @@ function formatBCH(satoshis: string | number): string {
 			return;
 		}
 
-		const transactionsHTML = transactions.map(tx => `
-			<div class="transaction-card">
-				<div class="tx-header">
-					<span class="tx-hash">${formatHash(tx.transaction.hash)}</span>
-					<span class="tx-time">${formatTimestamp(tx.validated_at)}</span>
-				</div>
-				<div class="tx-details">
-					<div class="tx-detail">
-						<span class="label">Inputs:</span>
-						<span class="value">${tx.transaction.input_count}</span>
-					</div>
-					<div class="tx-detail">
-						<span class="label">Outputs:</span>
-						<span class="value">${tx.transaction.output_count}</span>
-					</div>
-					<div class="tx-detail">
-						<span class="label">Value:</span>
-						<span class="value">${formatBCH(tx.transaction.output_value_satoshis)}</span>
-					</div>
-					<div class="tx-detail">
-						<span class="label">Size:</span>
-						<span class="value">${parseInt(tx.transaction.size_bytes).toLocaleString()} bytes</span>
-					</div>
-				</div>
-			</div>
-		`).join('');
+		// Create transaction cards with proper styling
+		const transactionCards = transactions.map(tx => {
+			const card = document.createElement('div');
+			card.className = 'transaction-card';
 
-		container.innerHTML = `<div class="transactions-list">${transactionsHTML}</div>`;
+			const header = document.createElement('div');
+			header.className = 'tx-header';
+
+			const hashSpan = document.createElement('span');
+			hashSpan.className = 'tx-hash';
+			hashSpan.textContent = formatHash(tx.transaction.hash);
+
+			const timeSpan = document.createElement('span');
+			timeSpan.className = 'tx-time';
+			timeSpan.textContent = formatTimestamp(tx.validated_at);
+
+			header.appendChild(hashSpan);
+			header.appendChild(timeSpan);
+
+			const details = document.createElement('div');
+			details.className = 'tx-details';
+
+			// Create detail items
+			const detailItems = [
+				{ label: 'Inputs:', value: tx.transaction.input_count },
+				{ label: 'Outputs:', value: tx.transaction.output_count },
+				{ label: 'Value:', value: formatBCH(tx.transaction.output_value_satoshis) },
+				{ label: 'Size:', value: parseInt(tx.transaction.size_bytes).toLocaleString() + ' bytes' }
+			];
+
+			detailItems.forEach(item => {
+				const detailDiv = document.createElement('div');
+				detailDiv.className = 'tx-detail';
+
+				const labelSpan = document.createElement('span');
+				labelSpan.className = 'label';
+				labelSpan.textContent = item.label;
+
+				const valueSpan = document.createElement('span');
+				valueSpan.className = 'value';
+				valueSpan.textContent = item.value;
+
+				detailDiv.appendChild(labelSpan);
+				detailDiv.appendChild(valueSpan);
+				details.appendChild(detailDiv);
+			});
+
+			card.appendChild(header);
+			card.appendChild(details);
+
+			return card;
+		});
+
+		// Clear container and add new cards
+		container.innerHTML = '';
+		const listDiv = document.createElement('div');
+		listDiv.className = 'transactions-list';
+		transactionCards.forEach(card => listDiv.appendChild(card));
+		container.appendChild(listDiv);
 	}
 
 	// Setup GraphQL subscription
