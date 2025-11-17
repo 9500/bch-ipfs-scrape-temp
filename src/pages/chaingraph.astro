@@ -390,13 +390,13 @@ function formatBCH(satoshis: string | number): string {
 		font-style: italic;
 	}
 
-	.transactions-list {
+	:global(.transactions-list) {
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
 	}
 
-	.transaction-card {
+	:global(.transaction-card) {
 		background: #1a1a1a;
 		border: 1px solid #3a3a3a;
 		border-radius: 6px;
@@ -404,12 +404,12 @@ function formatBCH(satoshis: string | number): string {
 		transition: all 0.2s ease;
 	}
 
-	.transaction-card:hover {
+	:global(.transaction-card:hover) {
 		border-color: #667eea;
 		background: #222222;
 	}
 
-	.tx-header {
+	:global(.tx-header) {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
@@ -420,38 +420,38 @@ function formatBCH(satoshis: string | number): string {
 		gap: 8px;
 	}
 
-	.tx-hash {
+	:global(.tx-hash) {
 		font-family: 'Courier New', monospace;
 		color: #667eea;
 		font-size: 14px;
 		font-weight: 600;
 	}
 
-	.tx-time {
+	:global(.tx-time) {
 		font-size: 12px;
 		color: #a0a0a0;
 	}
 
-	.tx-details {
+	:global(.tx-details) {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 		gap: 12px;
 	}
 
-	.tx-detail {
+	:global(.tx-detail) {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 	}
 
-	.tx-detail .label {
+	:global(.tx-detail .label) {
 		font-size: 11px;
 		color: #a0a0a0;
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
 
-	.tx-detail .value {
+	:global(.tx-detail .value) {
 		font-size: 14px;
 		color: #e0e0e0;
 		font-weight: 500;
