@@ -33,7 +33,13 @@ function formatBCH(satoshis: string | number): string {
 ---
 
 <MainLayout title="Chaingraph">
-	<h2>Chaingraph Mempool Monitor</h2>
+	<div class="header-with-status">
+		<h2>Chaingraph Mempool Monitor</h2>
+		<div id="connection-status" class="status-badge disconnected">
+			<span class="status-dot"></span>
+			<span class="status-text">Connecting...</span>
+		</div>
+	</div>
 
 	{error ? (
 		<section class="error-section">
@@ -48,25 +54,26 @@ function formatBCH(satoshis: string | number): string {
 				<div class="info-grid">
 					<div class="info-card">
 						<span class="info-label">Node Name</span>
-						<span class="info-value">{data.nodeName}</span>
+						<span class="info-value" id="node-name">{data.nodeName}</span>
 					</div>
 					<div class="info-card">
 						<span class="info-label">User Agent</span>
-						<span class="info-value small">{data.userAgent}</span>
+						<span class="info-value small" id="user-agent">{data.userAgent}</span>
 					</div>
 					<div class="info-card">
 						<span class="info-label">Mempool Transactions</span>
-						<span class="info-value highlight">{data.unconfirmedCount.toLocaleString()}</span>
+						<span class="info-value highlight" id="mempool-count">{data.unconfirmedCount.toLocaleString()}</span>
 					</div>
 				</div>
 			</section>
 
 			<section class="status-section">
 				<h3>Recent Mempool Transactions (Last 5)</h3>
+				<div id="transactions-container">
 				{data.recentTransactions.length === 0 ? (
 					<p class="no-data">No recent transactions in mempool</p>
 				) : (
-					<div class="transactions-list">
+					<div class="transactions-list" id="transactions-list">
 						{data.recentTransactions.map((tx: any) => (
 							<div class="transaction-card">
 								<div class="tx-header">
@@ -95,14 +102,174 @@ function formatBCH(satoshis: string | number): string {
 						))}
 					</div>
 				)}
+				</div>
 			</section>
 
 			<div class="refresh-note">
-				<p>💡 Data fetched in real-time via GraphQL. Refresh the page to get updated mempool information.</p>
+				<p>💡 Live updates enabled via GraphQL subscription. Data refreshes automatically.</p>
 			</div>
 		</>
 	)}
 </MainLayout>
+
+<script>
+	import { createClient } from 'graphql-ws';
+
+	const GRAPHQL_WS_URL = 'ws://192.168.88.105:8088/v1/graphql';
+
+	// Helper functions (mirroring server-side)
+	function formatHash(hash) {
+		if (!hash) return 'N/A';
+		return hash.replace(/\\x/g, '').substring(0, 16) + '...';
+	}
+
+	function formatTimestamp(ts) {
+		if (!ts) return 'N/A';
+		const date = new Date(ts);
+		return date.toLocaleString();
+	}
+
+	function formatBCH(satoshis) {
+		const sats = typeof satoshis === 'string' ? parseInt(satoshis) : satoshis;
+		return (sats / 100000000).toFixed(8) + ' BCH';
+	}
+
+	// Update connection status
+	function setConnectionStatus(connected) {
+		const statusEl = document.getElementById('connection-status');
+		const statusText = statusEl.querySelector('.status-text');
+
+		if (connected) {
+			statusEl.classList.remove('disconnected');
+			statusEl.classList.add('connected');
+			statusText.textContent = 'Live';
+		} else {
+			statusEl.classList.remove('connected');
+			statusEl.classList.add('disconnected');
+			statusText.textContent = 'Disconnected';
+		}
+	}
+
+	// Update node information
+	function updateNodeInfo(nodeData) {
+		const nodeName = document.getElementById('node-name');
+		const userAgent = document.getElementById('user-agent');
+		const mempoolCount = document.getElementById('mempool-count');
+
+		if (nodeName) nodeName.textContent = nodeData.name;
+		if (userAgent) userAgent.textContent = nodeData.user_agent;
+		if (mempoolCount) {
+			const count = parseInt(nodeData.unconfirmed_transaction_count) || 0;
+			mempoolCount.textContent = count.toLocaleString();
+		}
+	}
+
+	// Update transactions list
+	function updateTransactions(transactions) {
+		const container = document.getElementById('transactions-container');
+		if (!container) return;
+
+		if (transactions.length === 0) {
+			container.innerHTML = '<p class="no-data">No recent transactions in mempool</p>';
+			return;
+		}
+
+		const transactionsHTML = transactions.map(tx => `
+			<div class="transaction-card">
+				<div class="tx-header">
+					<span class="tx-hash">${formatHash(tx.transaction.hash)}</span>
+					<span class="tx-time">${formatTimestamp(tx.validated_at)}</span>
+				</div>
+				<div class="tx-details">
+					<div class="tx-detail">
+						<span class="label">Inputs:</span>
+						<span class="value">${tx.transaction.input_count}</span>
+					</div>
+					<div class="tx-detail">
+						<span class="label">Outputs:</span>
+						<span class="value">${tx.transaction.output_count}</span>
+					</div>
+					<div class="tx-detail">
+						<span class="label">Value:</span>
+						<span class="value">${formatBCH(tx.transaction.output_value_satoshis)}</span>
+					</div>
+					<div class="tx-detail">
+						<span class="label">Size:</span>
+						<span class="value">${parseInt(tx.transaction.size_bytes).toLocaleString()} bytes</span>
+					</div>
+				</div>
+			</div>
+		`).join('');
+
+		container.innerHTML = `<div class="transactions-list">${transactionsHTML}</div>`;
+	}
+
+	// Setup GraphQL subscription
+	function setupSubscription() {
+		const client = createClient({
+			url: GRAPHQL_WS_URL,
+			retryAttempts: Infinity,
+			shouldRetry: () => true,
+		});
+
+		const subscription = client.subscribe(
+			{
+				query: `
+					subscription MonitorMempools {
+						node {
+							name
+							user_agent
+							unconfirmed_transaction_count
+							unconfirmed_transactions(
+								limit: 5,
+								order_by: { validated_at: desc }
+							) {
+								validated_at
+								transaction {
+									hash
+									input_count
+									output_count
+									output_value_satoshis
+									size_bytes
+								}
+							}
+						}
+					}
+				`,
+			},
+			{
+				next: (data) => {
+					console.log('Received subscription data:', data);
+
+					if (data.data && data.data.node && data.data.node.length > 0) {
+						const nodeData = data.data.node[0];
+						updateNodeInfo(nodeData);
+						updateTransactions(nodeData.unconfirmed_transactions || []);
+						setConnectionStatus(true);
+					}
+				},
+				error: (error) => {
+					console.error('Subscription error:', error);
+					setConnectionStatus(false);
+				},
+				complete: () => {
+					console.log('Subscription complete');
+					setConnectionStatus(false);
+				},
+			}
+		);
+
+		return () => subscription();
+	}
+
+	// Start subscription when page loads
+	if (typeof window !== 'undefined') {
+		const unsubscribe = setupSubscription();
+
+		// Clean up on page unload
+		window.addEventListener('beforeunload', unsubscribe);
+	}
+</script>
 
 <style>
 	.error-section {
@@ -271,5 +438,66 @@ function formatBCH(satoshis: string | number): string {
 		margin: 0;
 		color: #a0a0a0;
 		font-size: 14px;
+	}
+
+	.header-with-status {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 24px;
+		flex-wrap: wrap;
+		gap: 16px;
+	}
+
+	.header-with-status h2 {
+		margin: 0;
+	}
+
+	.status-badge {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		border-radius: 20px;
+		font-size: 14px;
+		font-weight: 500;
+		transition: all 0.3s ease;
+	}
+
+	.status-badge.connected {
+		background: rgba(76, 175, 80, 0.2);
+		border: 1px solid rgba(76, 175, 80, 0.5);
+		color: #4caf50;
+	}
+
+	.status-badge.disconnected {
+		background: rgba(158, 158, 158, 0.2);
+		border: 1px solid rgba(158, 158, 158, 0.5);
+		color: #9e9e9e;
+	}
+
+	.status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		animation: pulse 2s infinite;
+	}
+
+	.status-badge.connected .status-dot {
+		background: #4caf50;
+	}
+
+	.status-badge.disconnected .status-dot {
+		background: #9e9e9e;
+		animation: none;
+	}
+
+	@keyframes pulse {
+		0%, 100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.5;
+		}
 	}
 </style>
