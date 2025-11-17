@@ -1,4 +1,4 @@
-const CHAINGRAPH_URL = 'http://192.168.88.105:8088/graphql';
+const CHAINGRAPH_URL = 'http://192.168.88.105:8088/v1/graphql';
 
 interface GraphQLResponse {
 	data?: any;
@@ -31,18 +31,24 @@ async function graphqlQuery(query: string): Promise<any> {
 }
 
 export async function getChaingraphData() {
-	// Query for latest block info, transaction count, and chain tip
 	const query = `
-		query {
-			block(limit: 1, order_by: {height: desc}) {
-				height
-				hash
-				timestamp
-				transaction_count
-			}
-			transaction_aggregate {
-				aggregate {
-					count
+		query MonitorMempools {
+			node {
+				name
+				user_agent
+				unconfirmed_transaction_count
+				unconfirmed_transactions(
+					limit: 5,
+					order_by: { validated_at: desc }
+				) {
+					validated_at
+					transaction {
+						hash
+						input_count
+						output_count
+						output_value_satoshis
+						size_bytes
+					}
 				}
 			}
 		}
@@ -50,13 +56,16 @@ export async function getChaingraphData() {
 
 	const data = await graphqlQuery(query);
 
-	const latestBlock = data.block && data.block.length > 0 ? data.block[0] : null;
+	const nodeData = data.node && data.node.length > 0 ? data.node[0] : null;
+
+	if (!nodeData) {
+		throw new Error('No node data returned from Chaingraph');
+	}
 
 	return {
-		blockHeight: latestBlock?.height || 0,
-		blockHash: latestBlock?.hash ? latestBlock.hash.substring(0, 16) + '...' : 'N/A',
-		timestamp: latestBlock?.timestamp || 'N/A',
-		transactionsInBlock: latestBlock?.transaction_count || 0,
-		totalTransactions: data.transaction_aggregate?.aggregate?.count || 0
+		nodeName: nodeData.name,
+		userAgent: nodeData.user_agent,
+		unconfirmedCount: parseInt(nodeData.unconfirmed_transaction_count) || 0,
+		recentTransactions: nodeData.unconfirmed_transactions || []
 	};
 }

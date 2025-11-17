@@ -10,77 +10,95 @@ try {
 } catch (e: any) {
 	error = e.message || 'Failed to connect to Chaingraph server';
 }
+
+// Helper function to format hash from byte array
+function formatHash(hash: string): string {
+	if (!hash) return 'N/A';
+	// Remove \x prefix and convert to readable format
+	return hash.replace(/\\x/g, '').substring(0, 16) + '...';
+}
+
+// Helper function to format timestamp
+function formatTimestamp(ts: string): string {
+	if (!ts) return 'N/A';
+	const date = new Date(ts);
+	return date.toLocaleString();
+}
+
+// Helper function to format satoshis to BCH
+function formatBCH(satoshis: string | number): string {
+	const sats = typeof satoshis === 'string' ? parseInt(satoshis) : satoshis;
+	return (sats / 100000000).toFixed(8) + ' BCH';
+}
 ---
 
 <MainLayout title="Chaingraph">
-	<h2>Chaingraph Indexer Status</h2>
+	<h2>Chaingraph Mempool Monitor</h2>
 
 	{error ? (
 		<section class="error-section">
 			<h3>⚠️ Error</h3>
 			<p class="error-message">{error}</p>
-			<p class="error-detail">Unable to fetch data from Chaingraph at http://192.168.88.105:8088/graphql</p>
+			<p class="error-detail">Unable to fetch data from Chaingraph at http://192.168.88.105:8088/v1/graphql</p>
 		</section>
 	) : (
 		<>
 			<section class="status-section">
-				<h3>Chain Tip Information</h3>
+				<h3>Node Information</h3>
 				<div class="info-grid">
 					<div class="info-card">
-						<span class="info-label">Block Height</span>
-						<span class="info-value highlight">{data.blockHeight.toLocaleString()}</span>
+						<span class="info-label">Node Name</span>
+						<span class="info-value">{data.nodeName}</span>
 					</div>
 					<div class="info-card">
-						<span class="info-label">Transactions in Block</span>
-						<span class="info-value">{data.transactionsInBlock.toLocaleString()}</span>
+						<span class="info-label">User Agent</span>
+						<span class="info-value small">{data.userAgent}</span>
 					</div>
 					<div class="info-card">
-						<span class="info-label">Total Transactions</span>
-						<span class="info-value">{data.totalTransactions.toLocaleString()}</span>
+						<span class="info-label">Mempool Transactions</span>
+						<span class="info-value highlight">{data.unconfirmedCount.toLocaleString()}</span>
 					</div>
 				</div>
 			</section>
 
 			<section class="status-section">
-				<h3>Latest Block Details</h3>
-				<div class="detail-list">
-					<div class="detail-item">
-						<span class="detail-label">Height:</span>
-						<span class="detail-value">{data.blockHeight.toLocaleString()}</span>
+				<h3>Recent Mempool Transactions (Last 5)</h3>
+				{data.recentTransactions.length === 0 ? (
+					<p class="no-data">No recent transactions in mempool</p>
+				) : (
+					<div class="transactions-list">
+						{data.recentTransactions.map((tx: any) => (
+							<div class="transaction-card">
+								<div class="tx-header">
+									<span class="tx-hash">{formatHash(tx.transaction.hash)}</span>
+									<span class="tx-time">{formatTimestamp(tx.validated_at)}</span>
+								</div>
+								<div class="tx-details">
+									<div class="tx-detail">
+										<span class="label">Inputs:</span>
+										<span class="value">{tx.transaction.input_count}</span>
+									</div>
+									<div class="tx-detail">
+										<span class="label">Outputs:</span>
+										<span class="value">{tx.transaction.output_count}</span>
+									</div>
+									<div class="tx-detail">
+										<span class="label">Value:</span>
+										<span class="value">{formatBCH(tx.transaction.output_value_satoshis)}</span>
+									</div>
+									<div class="tx-detail">
+										<span class="label">Size:</span>
+										<span class="value">{parseInt(tx.transaction.size_bytes).toLocaleString()} bytes</span>
+									</div>
+								</div>
+							</div>
+						))}
 					</div>
-					<div class="detail-item">
-						<span class="detail-label">Hash (preview):</span>
-						<span class="detail-value">{data.blockHash}</span>
-					</div>
-					<div class="detail-item">
-						<span class="detail-label">Timestamp:</span>
-						<span class="detail-value">{data.timestamp}</span>
-					</div>
-				</div>
-			</section>
-
-			<section class="status-section">
-				<h3>Statistics</h3>
-				<div class="stats-grid">
-					<div class="stat-card">
-						<div class="stat-icon">📊</div>
-						<div class="stat-content">
-							<span class="stat-label">Total Indexed Transactions</span>
-							<span class="stat-value">{data.totalTransactions.toLocaleString()}</span>
-						</div>
-					</div>
-					<div class="stat-card">
-						<div class="stat-icon">🔗</div>
-						<div class="stat-content">
-							<span class="stat-label">Current Block Transactions</span>
-							<span class="stat-value">{data.transactionsInBlock.toLocaleString()}</span>
-						</div>
-					</div>
-				</div>
+				)}
 			</section>
 
 			<div class="refresh-note">
-				<p>💡 Data fetched in real-time via GraphQL. Refresh the page to get updated information.</p>
+				<p>💡 Data fetched in real-time via GraphQL. Refresh the page to get updated mempool information.</p>
 			</div>
 		</>
 	)}
@@ -155,76 +173,90 @@ try {
 		font-size: 24px;
 		font-weight: 600;
 		color: #e0e0e0;
+		word-break: break-all;
+	}
+
+	.info-value.small {
+		font-size: 14px;
+		font-family: 'Courier New', monospace;
 	}
 
 	.info-value.highlight {
 		color: #667eea;
 	}
 
-	.detail-list {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
+	.no-data {
+		text-align: center;
+		color: #a0a0a0;
+		padding: 32px;
+		font-style: italic;
 	}
 
-	.detail-item {
+	.transactions-list {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.transaction-card {
 		background: #1a1a1a;
-		padding: 16px;
-		border-radius: 6px;
 		border: 1px solid #3a3a3a;
+		border-radius: 6px;
+		padding: 16px;
+		transition: all 0.2s ease;
+	}
+
+	.transaction-card:hover {
+		border-color: #667eea;
+		background: #222222;
+	}
+
+	.tx-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		margin-bottom: 12px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid #3a3a3a;
+		flex-wrap: wrap;
+		gap: 8px;
 	}
 
-	.detail-label {
-		font-size: 14px;
-		color: #a0a0a0;
-		font-weight: 500;
-	}
-
-	.detail-value {
-		font-size: 14px;
-		color: #e0e0e0;
+	.tx-hash {
 		font-family: 'Courier New', monospace;
+		color: #667eea;
+		font-size: 14px;
+		font-weight: 600;
 	}
 
-	.stats-grid {
+	.tx-time {
+		font-size: 12px;
+		color: #a0a0a0;
+	}
+
+	.tx-details {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-		gap: 16px;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 12px;
 	}
 
-	.stat-card {
-		background: #1a1a1a;
-		padding: 20px;
-		border-radius: 6px;
-		border: 1px solid #3a3a3a;
-		display: flex;
-		align-items: center;
-		gap: 16px;
-	}
-
-	.stat-icon {
-		font-size: 32px;
-	}
-
-	.stat-content {
+	.tx-detail {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 	}
 
-	.stat-label {
-		font-size: 12px;
+	.tx-detail .label {
+		font-size: 11px;
 		color: #a0a0a0;
 		text-transform: uppercase;
+		letter-spacing: 0.5px;
 	}
 
-	.stat-value {
-		font-size: 20px;
-		font-weight: 600;
-		color: #667eea;
+	.tx-detail .value {
+		font-size: 14px;
+		color: #e0e0e0;
+		font-weight: 500;
 	}
 
 	.refresh-note {
