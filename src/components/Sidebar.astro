@@ -1,0 +1,66 @@
+---
+const currentPath = Astro.url.pathname;
+
+const menuItems = [
+	{ path: '/', label: 'Dashboard' },
+	{ path: '/form', label: 'Form' },
+	{ path: '/gallery', label: 'Gallery' }
+];
+---
+
+<aside class="sidebar">
+	<nav>
+		<ul>
+			{menuItems.map(item => (
+				<li class={currentPath === item.path ? 'active' : ''}>
+					<a href={item.path}>{item.label}</a>
+				</li>
+			))}
+		</ul>
+	</nav>
+</aside>
+
+<style>
+	.sidebar {
+		position: fixed;
+		left: 0;
+		top: 48px;
+		bottom: 0;
+		background: #2d2d2d;
+		border-right: 1px solid #3a3a3a;
+		width: fit-content;
+		min-width: 200px;
+		z-index: 100;
+	}
+
+	nav ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	nav li {
+		border-bottom: 1px solid #3a3a3a;
+	}
+
+	nav li a {
+		display: block;
+		padding: 14px 24px;
+		color: #e0e0e0;
+		text-decoration: none;
+		transition: all 0.2s ease;
+		font-size: 14px;
+	}
+
+	nav li a:hover {
+		background: #3a3a3a;
+		color: #ffffff;
+	}
+
+	nav li.active a {
+		background: #1a1a1a;
+		color: #ffffff;
+		border-left: 3px solid #667eea;
+		padding-left: 21px;
+	}
+</style>
