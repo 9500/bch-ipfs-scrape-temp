@@ -4,10 +4,11 @@
  * Console application to fetch and save IPFS links from Bitcoin Cash Metadata Registries
  */
 
-import { writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { getBCMRRegistries, fetchAndValidateRegistry } from './lib/bcmr.js';
 import * as dotenv from 'dotenv';
 import { join } from 'path';
+import { createHash } from 'crypto';
 
 // Load environment variables
 dotenv.config();
@@ -161,13 +162,40 @@ async function extractIPFSLinks(
         // Optionally fetch and validate registry JSON
         if (fetchJson) {
           try {
-            const registryJson = await fetchAndValidateRegistry(registry.uris, registry.hash);
+            const jsonPath = join(jsonFolder, `${registry.tokenId}.json`);
+            let registryJson = null;
 
+            // Check if file already exists locally
+            if (existsSync(jsonPath)) {
+              try {
+                const fileContent = readFileSync(jsonPath, 'utf-8');
+                const computedHash = createHash('sha256').update(fileContent).digest('hex');
+
+                if (computedHash === registry.hash) {
+                  // Hash matches, use existing file (skip network fetch)
+                  registryJson = JSON.parse(fileContent);
+                } else {
+                  // Hash mismatch, file is outdated or corrupted
+                  console.warn(`Hash mismatch for ${registry.tokenId}, refetching...`);
+                }
+              } catch (error) {
+                // File exists but can't read/parse, will fetch from network
+                console.warn(`Error reading local file for ${registry.tokenId}, refetching...`);
+              }
+            }
+
+            // If not found locally or hash mismatch, fetch from network
+            if (!registryJson) {
+              registryJson = await fetchAndValidateRegistry(registry.uris, registry.hash);
+
+              if (registryJson) {
+                // Save the JSON file
+                writeFileSync(jsonPath, JSON.stringify(registryJson, null, 2), 'utf-8');
+              }
+            }
+
+            // Update linkOutput based on whether we got valid JSON
             if (registryJson) {
-              // Save the JSON file
-              const jsonPath = join(jsonFolder, `${registry.tokenId}.json`);
-              writeFileSync(jsonPath, JSON.stringify(registryJson, null, 2), 'utf-8');
-
               linkOutput.registryValid = true;
               linkOutput.registryFetched = true;
               linkOutput.jsonPath = jsonPath;
