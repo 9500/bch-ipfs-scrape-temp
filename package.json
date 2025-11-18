@@ -10,10 +10,12 @@
     "dev": "tsc && node dist/index.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
     "typescript": "^5.3.3"
   }
 }

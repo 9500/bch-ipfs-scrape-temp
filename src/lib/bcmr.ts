@@ -3,6 +3,8 @@
  * Fetches and parses BCMR registry announcements from the BCH blockchain
  */
 
+import { getOutputSpendingTx } from './fulcrum-client.js';
+
 // GraphQL query to fetch all BCMR outputs using prefix search
 const BCMR_QUERY = `
   query SearchOutputsByLockingBytecodePrefix {
@@ -78,6 +80,8 @@ interface BCMRRegistry {
   uris: string[];
   isBurned: boolean;
   isValid: boolean;
+  authchainLength: number; // Number of transactions in the authchain
+  isAuthheadUnspent: boolean; // True if authhead output 0 is unspent (active registry)
 }
 
 /**
@@ -207,6 +211,58 @@ function isOutputBurned(output: BCMROutput): boolean {
 }
 
 /**
+ * Resolve authchain to find the current authhead
+ * Follows the chain of transactions spending output 0 until an unspent output is found
+ *
+ * @param authbaseTxid - Starting transaction hash (authbase)
+ * @returns Object containing authhead txid, chain length, and whether it's active
+ */
+async function resolveAuthchain(authbaseTxid: string): Promise<{
+  authhead: string;
+  chainLength: number;
+  isActive: boolean;
+}> {
+  let currentTxid = authbaseTxid;
+  let chainLength = 1;
+  const maxChainLength = 1000; // Safety limit to prevent infinite loops
+
+  try {
+    while (chainLength < maxChainLength) {
+      // Check if output 0 of current transaction is spent
+      const spendingTxid = await getOutputSpendingTx(currentTxid, 0);
+
+      if (spendingTxid === null) {
+        // Output 0 is unspent - this is the authhead
+        return {
+          authhead: currentTxid,
+          chainLength,
+          isActive: true,
+        };
+      }
+
+      // Output 0 is spent, follow the chain
+      currentTxid = spendingTxid;
+      chainLength++;
+    }
+
+    // Hit max chain length
+    console.warn(`Warning: Authchain exceeded maximum length of ${maxChainLength} for ${authbaseTxid}`);
+    return {
+      authhead: currentTxid,
+      chainLength,
+      isActive: false,
+    };
+  } catch (error) {
+    // Return the current position with isActive=false to indicate error
+    return {
+      authhead: currentTxid,
+      chainLength,
+      isActive: false,
+    };
+  }
+}
+
+/**
  * Fetch all BCMR registries from Chaingraph
  */
 export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
@@ -248,7 +304,16 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
     // Parse and build registry list
     const registries: BCMRRegistry[] = [];
 
-    for (const output of validOutputs) {
+    console.log(`Resolving authchains for ${validOutputs.length} registries...`);
+
+    for (let i = 0; i < validOutputs.length; i++) {
+      const output = validOutputs[i];
+
+      // Progress indicator every 100 registries
+      if ((i + 1) % 100 === 0) {
+        console.log(`  Resolving authchains... ${i + 1}/${validOutputs.length}`);
+      }
+
       const parsed = parseBCMRBytecode(output.locking_bytecode);
 
       if (!parsed) {
@@ -256,30 +321,35 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
         continue;
       }
 
+      // Strip hex prefix from transaction hash
+      const txHash = stripHexPrefix(output.transaction_hash);
+
+      // Resolve authchain to find the true authhead
+      const authchainResult = await resolveAuthchain(txHash);
+
       // Get block height (if confirmed) - convert string to number
       const blockHeight = output.transaction.block_inclusions[0]?.block.height
         ? parseInt(String(output.transaction.block_inclusions[0].block.height))
         : 0;
 
-      // Check if this is the authhead (output 0 is unspent or is OP_RETURN)
-      const outputIndex = parseInt(String(output.output_index));
-      const isAuthhead = outputIndex === 0 && output.spent_by.length === 0;
+      // Check if output is burned (OP_RETURN at index 0)
       const isBurned = isOutputBurned(output);
-
-      // Strip hex prefix from transaction hash
-      const txHash = stripHexPrefix(output.transaction_hash);
 
       registries.push({
         authbase: txHash,
-        authhead: txHash, // Simplified: treating each as its own authhead
+        authhead: authchainResult.authhead,
         tokenId: txHash,
         blockHeight,
         hash: parsed.hash,
         uris: parsed.uris,
         isBurned,
         isValid: parsed.uris.length > 0, // Valid if has at least one URI
+        authchainLength: authchainResult.chainLength,
+        isAuthheadUnspent: authchainResult.isActive,
       });
     }
+
+    console.log(`Authchain resolution complete.`);
 
     // Sort by block height (newest first)
     registries.sort((a, b) => b.blockHeight - a.blockHeight);
