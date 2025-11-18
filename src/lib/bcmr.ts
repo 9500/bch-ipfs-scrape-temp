@@ -5,6 +5,13 @@
 
 import { getOutputSpendingTx } from './fulcrum-client.js';
 import { createHash } from 'crypto';
+import type { AuthchainCache, AuthchainCacheEntry } from './authchain-cache.js';
+import {
+  loadAuthchainCache,
+  saveAuthchainCache,
+  createEmptyCache,
+  getCacheStats,
+} from './authchain-cache.js';
 
 // GraphQL query to fetch all BCMR outputs using prefix search
 const BCMR_QUERY = `
@@ -214,30 +221,96 @@ function isOutputBurned(output: BCMROutput): boolean {
 /**
  * Resolve authchain to find the current authhead
  * Follows the chain of transactions spending output 0 until an unspent output is found
+ * Uses cache to avoid redundant queries when possible
  *
  * @param authbaseTxid - Starting transaction hash (authbase)
- * @returns Object containing authhead txid, chain length, and whether it's active
+ * @param cache - Optional cache to check for existing authchain data
+ * @returns Cache entry with authhead, chain length, and active status
  */
-async function resolveAuthchain(authbaseTxid: string): Promise<{
-  authhead: string;
-  chainLength: number;
-  isActive: boolean;
-}> {
+async function resolveAuthchain(
+  authbaseTxid: string,
+  cache?: AuthchainCache
+): Promise<AuthchainCacheEntry> {
+  const cachedEntry = cache?.entries[authbaseTxid];
+
+  // OPTIMIZATION 1: Inactive chains never become active again - perfect cache!
+  if (cachedEntry && !cachedEntry.isActive) {
+    return cachedEntry; // 0 Fulcrum queries
+  }
+
+  // OPTIMIZATION 2: For active chains, check if cached authhead is still unspent
+  if (cachedEntry && cachedEntry.isActive) {
+    const spendingTx = await getOutputSpendingTx(cachedEntry.authhead, 0);
+
+    if (spendingTx === null) {
+      // Still unspent - just update timestamp
+      return {
+        ...cachedEntry,
+        lastCheckedTimestamp: Date.now(),
+      }; // 1 Fulcrum query
+    }
+
+    // Authhead was spent! Continue from here instead of from authbase
+    let currentTxid = spendingTx;
+    let chainLength = cachedEntry.chainLength + 1;
+    const maxChainLength = 1000;
+
+    try {
+      while (chainLength < maxChainLength) {
+        const nextSpendingTx = await getOutputSpendingTx(currentTxid, 0);
+
+        if (nextSpendingTx === null) {
+          // Found new authhead
+          return {
+            authbase: authbaseTxid,
+            authhead: currentTxid,
+            chainLength,
+            isActive: true,
+            lastCheckedTimestamp: Date.now(),
+          };
+        }
+
+        currentTxid = nextSpendingTx;
+        chainLength++;
+      }
+
+      // Max chain length exceeded
+      return {
+        authbase: authbaseTxid,
+        authhead: currentTxid,
+        chainLength,
+        isActive: false,
+        lastCheckedTimestamp: Date.now(),
+      };
+    } catch (error) {
+      // Error during continuation
+      return {
+        authbase: authbaseTxid,
+        authhead: currentTxid,
+        chainLength,
+        isActive: false,
+        lastCheckedTimestamp: Date.now(),
+      };
+    }
+  }
+
+  // NO CACHE: Walk entire chain from authbase
   let currentTxid = authbaseTxid;
   let chainLength = 1;
-  const maxChainLength = 1000; // Safety limit to prevent infinite loops
+  const maxChainLength = 1000;
 
   try {
     while (chainLength < maxChainLength) {
-      // Check if output 0 of current transaction is spent
       const spendingTxid = await getOutputSpendingTx(currentTxid, 0);
 
       if (spendingTxid === null) {
         // Output 0 is unspent - this is the authhead
         return {
+          authbase: authbaseTxid,
           authhead: currentTxid,
           chainLength,
           isActive: true,
+          lastCheckedTimestamp: Date.now(),
         };
       }
 
@@ -247,31 +320,60 @@ async function resolveAuthchain(authbaseTxid: string): Promise<{
     }
 
     // Hit max chain length
-    console.warn(`Warning: Authchain exceeded maximum length of ${maxChainLength} for ${authbaseTxid}`);
+    console.warn(
+      `Warning: Authchain exceeded maximum length of ${maxChainLength} for ${authbaseTxid}`
+    );
     return {
+      authbase: authbaseTxid,
       authhead: currentTxid,
       chainLength,
       isActive: false,
+      lastCheckedTimestamp: Date.now(),
     };
   } catch (error) {
     // Return the current position with isActive=false to indicate error
     return {
+      authbase: authbaseTxid,
       authhead: currentTxid,
       chainLength,
       isActive: false,
+      lastCheckedTimestamp: Date.now(),
     };
   }
 }
 
 /**
  * Fetch all BCMR registries from Chaingraph
+ * Uses authchain caching to avoid redundant Fulcrum queries
+ *
+ * @param options - Optional configuration
+ * @param options.useCache - Whether to use cache (default: true)
+ * @param options.cachePath - Path to cache file (default: ./bcmr-registries/.authchain-cache.json)
  */
-export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
+export async function getBCMRRegistries(options?: {
+  useCache?: boolean;
+  cachePath?: string;
+}): Promise<BCMRRegistry[]> {
+  const useCache = options?.useCache !== false;
+  const cachePath = options?.cachePath || './bcmr-registries/.authchain-cache.json';
+
   try {
     const CHAINGRAPH_URL = process.env.CHAINGRAPH_URL || '';
 
     if (!CHAINGRAPH_URL) {
       throw new Error('CHAINGRAPH_URL environment variable is not set');
+    }
+
+    // Load cache if enabled
+    let oldCache: AuthchainCache | undefined;
+    if (useCache) {
+      oldCache = loadAuthchainCache(cachePath);
+      const stats = getCacheStats(oldCache);
+      if (stats.totalEntries > 0) {
+        console.log(
+          `Loaded authchain cache: ${stats.totalEntries} entries (${stats.activeEntries} active, ${stats.inactiveEntries} inactive)`
+        );
+      }
     }
 
     const response = await fetch(CHAINGRAPH_URL, {
@@ -288,7 +390,7 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
       throw new Error(`Chaingraph request failed: ${response.status}`);
     }
 
-    const data = await response.json() as {
+    const data = (await response.json()) as {
       data?: { search_output_prefix?: BCMROutput[] };
       errors?: Array<{ message: string }>;
     };
@@ -302,8 +404,14 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
     // Filter to keep only first BCMR output per transaction
     const validOutputs = filterFirstOutputOnly(outputs);
 
-    // Parse and build registry list
+    // Build new cache as we process registries
+    const newCache = createEmptyCache();
     const registries: BCMRRegistry[] = [];
+
+    // Track cache performance
+    let cacheHits = 0;
+    let cacheMisses = 0;
+    let inactiveCacheHits = 0;
 
     console.log(`Resolving authchains for ${validOutputs.length} registries...`);
 
@@ -325,8 +433,25 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
       // Strip hex prefix from transaction hash
       const txHash = stripHexPrefix(output.transaction_hash);
 
-      // Resolve authchain to find the true authhead
-      const authchainResult = await resolveAuthchain(txHash);
+      // Track if this was a cache hit
+      const hadCachedEntry = oldCache?.entries[txHash] !== undefined;
+      const wasInactive = oldCache?.entries[txHash]?.isActive === false;
+
+      // Resolve authchain with caching
+      const authchainResult = await resolveAuthchain(txHash, oldCache);
+
+      // Update cache statistics
+      if (hadCachedEntry) {
+        cacheHits++;
+        if (wasInactive) {
+          inactiveCacheHits++;
+        }
+      } else {
+        cacheMisses++;
+      }
+
+      // Store in new cache
+      newCache.entries[txHash] = authchainResult;
 
       // Get block height (if confirmed) - convert string to number
       const blockHeight = output.transaction.block_inclusions[0]?.block.height
@@ -351,6 +476,14 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
     }
 
     console.log(`Authchain resolution complete.`);
+
+    // Save cache (atomic - only if we got here successfully)
+    if (useCache) {
+      saveAuthchainCache(newCache, cachePath);
+      console.log(
+        `Cache: ${cacheHits} hits, ${cacheMisses} misses (${inactiveCacheHits} inactive/permanent)`
+      );
+    }
 
     // Sort by block height (newest first)
     registries.sort((a, b) => b.blockHeight - a.blockHeight);

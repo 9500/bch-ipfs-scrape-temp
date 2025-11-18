@@ -25,5 +25,6 @@ pnpm-debug.log*
 
 # generated output files
 bcmr-registries/
+.authchain-cache.json
 bcmr-ipfs-links.txt
 *.json.txt

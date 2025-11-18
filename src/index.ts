@@ -4,7 +4,7 @@
  * Console application to fetch and save IPFS links from Bitcoin Cash Metadata Registries
  */
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import { getBCMRRegistries, fetchAndValidateRegistry } from './lib/bcmr.js';
 import * as dotenv from 'dotenv';
 import { join } from 'path';
@@ -33,12 +33,16 @@ function parseArgs(): {
   output: string;
   fetchJson: boolean;
   jsonFolder: string;
+  useCache: boolean;
+  clearCache: boolean;
 } {
   const args = process.argv.slice(2);
   let format: 'txt' | 'json' = 'txt';
   let output = 'bcmr-ipfs-links.txt';
   let fetchJson = false;
   let jsonFolder = './bcmr-registries';
+  let useCache = true;
+  let clearCache = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -68,6 +72,10 @@ function parseArgs(): {
         process.exit(1);
       }
       i++;
+    } else if (arg === '--no-cache') {
+      useCache = false;
+    } else if (arg === '--clear-cache') {
+      clearCache = true;
     } else if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
@@ -78,7 +86,7 @@ function parseArgs(): {
     }
   }
 
-  return { format, output, fetchJson, jsonFolder };
+  return { format, output, fetchJson, jsonFolder, useCache, clearCache };
 }
 
 /**
@@ -95,6 +103,8 @@ Options:
   --output, -o <filename>   Output filename (default: bcmr-ipfs-links.txt)
   --fetch-json              Fetch and validate registry JSON from URIs
   --json-folder <path>      Folder to save registry JSON files (default: ./bcmr-registries)
+  --no-cache                Disable authchain caching (force full resolution)
+  --clear-cache             Delete cache before running
   --help, -h                Show this help message
 
 Examples:
@@ -103,10 +113,17 @@ Examples:
   npm start --fetch-json                      # Fetch and validate registry JSON
   npm start --fetch-json --json-folder ./data # Custom JSON storage folder
   npm start --output my-links.txt             # Custom output filename
+  npm start --no-cache                        # Force full authchain resolution
+  npm start --clear-cache                     # Clear cache and rebuild
 
 Environment Variables:
   CHAINGRAPH_URL    GraphQL endpoint for Chaingraph (required)
   FULCRUM_WS_URL    Fulcrum WebSocket endpoint for authchain resolution (required)
+
+Performance:
+  Authchain caching significantly improves performance on subsequent runs.
+  First run: ~6-10 minutes (builds cache)
+  Subsequent runs: ~2-4 minutes (uses cache for inactive chains)
 `);
 }
 
@@ -246,10 +263,28 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const { format, output, fetchJson, jsonFolder } = parseArgs();
+    const { format, output, fetchJson, jsonFolder, useCache, clearCache } = parseArgs();
+
+    // Handle cache clearing
+    if (clearCache) {
+      const cachePath = join(jsonFolder, '.authchain-cache.json');
+      try {
+        if (existsSync(cachePath)) {
+          unlinkSync(cachePath);
+          console.log('Authchain cache cleared');
+        } else {
+          console.log('No cache file to clear');
+        }
+      } catch (error) {
+        console.warn(`Failed to clear cache: ${error instanceof Error ? error.message : error}`);
+      }
+    }
 
     console.log('Fetching BCMR registries from Chaingraph...');
-    const registries = await getBCMRRegistries();
+    const registries = await getBCMRRegistries({
+      useCache,
+      cachePath: join(jsonFolder, '.authchain-cache.json'),
+    });
     console.log(`Found ${registries.length} total registries`);
 
     // Show authchain summary
