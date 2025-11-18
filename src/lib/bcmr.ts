@@ -1,0 +1,314 @@
+/**
+ * BCMR (Bitcoin Cash Metadata Registries) Library
+ * Fetches and parses BCMR registry announcements from the BCH blockchain
+ */
+
+const CHAINGRAPH_URL = import.meta.env.CHAINGRAPH_URL;
+
+// GraphQL query to fetch all BCMR outputs using prefix search
+const BCMR_QUERY = `
+  query SearchOutputsByLockingBytecodePrefix {
+    search_output_prefix(
+      args: { locking_bytecode_prefix_hex: "6a0442434d5220" }
+    ) {
+      locking_bytecode
+      output_index
+      transaction_hash
+      value_satoshis
+      transaction {
+        block_inclusions {
+          block {
+            hash
+            height
+          }
+        }
+      }
+      spent_by {
+        input_index
+        transaction {
+          hash
+          block_inclusions {
+            block {
+              hash
+              height
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface BCMROutput {
+  locking_bytecode: string;
+  output_index: string | number; // Chaingraph returns as string
+  transaction_hash: string;
+  value_satoshis: string | number; // Chaingraph returns as string
+  transaction: {
+    block_inclusions: Array<{
+      block: {
+        hash: string;
+        height: string | number; // Chaingraph returns as string
+      };
+    }>;
+  };
+  spent_by: Array<{
+    input_index: string | number; // Chaingraph returns as string
+    transaction: {
+      hash: string;
+      block_inclusions: Array<{
+        block: {
+          hash: string;
+          height: string | number; // Chaingraph returns as string
+        };
+      }>;
+    };
+  }>;
+}
+
+interface ParsedBCMR {
+  hash: string;
+  uris: string[];
+}
+
+interface BCMRRegistry {
+  authbase: string; // Transaction hash where authchain starts
+  authhead: string; // Latest transaction in authchain
+  tokenId: string;  // Same as authbase for display
+  blockHeight: number;
+  hash: string;
+  uris: string[];
+  isBurned: boolean;
+  isValid: boolean;
+}
+
+/**
+ * Strip PostgreSQL hex prefix (\x) from hex strings
+ */
+function stripHexPrefix(hex: string): string {
+  // Handle both \x and \\x prefixes from PostgreSQL
+  if (hex.startsWith('\\x')) {
+    return hex.slice(2);
+  }
+  if (hex.startsWith('0x')) {
+    return hex.slice(2);
+  }
+  return hex;
+}
+
+/**
+ * Parse BCMR locking bytecode to extract hash and URIs
+ */
+function parseBCMRBytecode(hex: string): ParsedBCMR | null {
+  try {
+    // Strip PostgreSQL hex prefix if present
+    const cleanHex = stripHexPrefix(hex);
+    const bytes = Buffer.from(cleanHex, 'hex');
+    let pos = 0;
+
+    // Verify OP_RETURN (0x6a)
+    if (bytes[pos] !== 0x6a) return null;
+    pos++;
+
+    // Verify OP_PUSHBYTES_4 (0x04) and "BCMR"
+    if (bytes[pos] !== 0x04) return null;
+    pos++;
+
+    const bcmrText = bytes.slice(pos, pos + 4).toString('ascii');
+    if (bcmrText !== 'BCMR') return null;
+    pos += 4;
+
+    // Verify OP_PUSHBYTES_32 (0x20) for hash
+    if (bytes[pos] !== 0x20) return null;
+    pos++;
+
+    // Extract 32-byte SHA-256 hash
+    const hash = bytes.slice(pos, pos + 32).toString('hex');
+    pos += 32;
+
+    // Extract URIs (remaining push operations)
+    const uris: string[] = [];
+
+    while (pos < bytes.length) {
+      const opcode = bytes[pos];
+      pos++;
+
+      let pushLength = 0;
+
+      if (opcode >= 0x01 && opcode <= 0x4b) {
+        // Direct push (1-75 bytes)
+        pushLength = opcode;
+      } else if (opcode === 0x4c) {
+        // OP_PUSHDATA1
+        pushLength = bytes[pos];
+        pos++;
+      } else if (opcode === 0x4d) {
+        // OP_PUSHDATA2
+        pushLength = bytes.readUInt16LE(pos);
+        pos += 2;
+      } else if (opcode === 0x4e) {
+        // OP_PUSHDATA4
+        pushLength = bytes.readUInt32LE(pos);
+        pos += 4;
+      } else {
+        // Unknown opcode, skip
+        break;
+      }
+
+      if (pos + pushLength > bytes.length) break;
+
+      const uriBytes = bytes.slice(pos, pos + pushLength);
+      try {
+        const uri = uriBytes.toString('utf8').trim();
+        // Per BCMR spec: accept all non-empty URIs (protocol-less URIs assume HTTPS)
+        if (uri.length > 0) {
+          uris.push(uri);
+        }
+      } catch (e) {
+        // Invalid UTF-8, skip this URI
+      }
+
+      pos += pushLength;
+    }
+
+    return { hash, uris };
+  } catch (error) {
+    console.error('Error parsing BCMR bytecode:', error);
+    return null;
+  }
+}
+
+/**
+ * Filter to keep only the first BCMR output per transaction
+ */
+function filterFirstOutputOnly(outputs: BCMROutput[]): BCMROutput[] {
+  const txMap = new Map<string, BCMROutput>();
+
+  for (const output of outputs) {
+    const txHash = stripHexPrefix(output.transaction_hash);
+    const existing = txMap.get(txHash);
+    const currentIndex = parseInt(String(output.output_index));
+    const existingIndex = existing ? parseInt(String(existing.output_index)) : Infinity;
+
+    if (!existing || currentIndex < existingIndex) {
+      txMap.set(txHash, output);
+    }
+  }
+
+  return Array.from(txMap.values());
+}
+
+/**
+ * Check if an output is burned (is OP_RETURN at output index 0)
+ */
+function isOutputBurned(output: BCMROutput): boolean {
+  // An identity is burned if the authhead transaction's output 0 is OP_RETURN
+  // For simplicity, we check if this output is at index 0 and is OP_RETURN
+  const outputIndex = parseInt(String(output.output_index));
+  return outputIndex === 0;
+}
+
+/**
+ * Fetch all BCMR registries from Chaingraph
+ */
+export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
+  try {
+    const response = await fetch(CHAINGRAPH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: BCMR_QUERY,
+      }),
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Chaingraph request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (data.errors) {
+      throw new Error(`GraphQL errors: ${JSON.stringify(data.errors)}`);
+    }
+
+    const outputs: BCMROutput[] = data.data.search_output_prefix || [];
+
+    // Filter to keep only first BCMR output per transaction
+    const validOutputs = filterFirstOutputOnly(outputs);
+
+    // Parse and build registry list
+    const registries: BCMRRegistry[] = [];
+
+    for (const output of validOutputs) {
+      const parsed = parseBCMRBytecode(output.locking_bytecode);
+
+      if (!parsed) {
+        // Failed to parse, skip
+        continue;
+      }
+
+      // Get block height (if confirmed) - convert string to number
+      const blockHeight = output.transaction.block_inclusions[0]?.block.height
+        ? parseInt(String(output.transaction.block_inclusions[0].block.height))
+        : 0;
+
+      // Check if this is the authhead (output 0 is unspent or is OP_RETURN)
+      const outputIndex = parseInt(String(output.output_index));
+      const isAuthhead = outputIndex === 0 && output.spent_by.length === 0;
+      const isBurned = isOutputBurned(output);
+
+      // Strip hex prefix from transaction hash
+      const txHash = stripHexPrefix(output.transaction_hash);
+
+      registries.push({
+        authbase: txHash,
+        authhead: txHash, // Simplified: treating each as its own authhead
+        tokenId: txHash,
+        blockHeight,
+        hash: parsed.hash,
+        uris: parsed.uris,
+        isBurned,
+        isValid: parsed.uris.length > 0, // Valid if has at least one URI
+      });
+    }
+
+    // Sort by block height (newest first)
+    registries.sort((a, b) => b.blockHeight - a.blockHeight);
+
+    return registries;
+  } catch (error) {
+    console.error('Error fetching BCMR registries:', error);
+    throw error;
+  }
+}
+
+/**
+ * Normalize URI to a clickable HTTP(S) URL
+ * - ipfs:// URIs are converted to IPFS gateway URLs
+ * - URIs without protocol are assumed to be HTTPS per BCMR spec
+ * - http:// and https:// URIs are kept as-is
+ */
+export function normalizeUri(uri: string): string {
+  if (uri.startsWith('ipfs://')) {
+    const hash = uri.replace('ipfs://', '');
+    return `https://ipfs.io/ipfs/${hash}`;
+  }
+
+  // If URI already has a protocol, keep it as-is
+  if (uri.startsWith('https://') || uri.startsWith('http://')) {
+    return uri;
+  }
+
+  // Per BCMR spec: URIs without protocol prefix assume HTTPS
+  return `https://${uri}`;
+}
+
+/**
+ * Legacy alias for backward compatibility
+ */
+export function ipfsToGateway(uri: string): string {
+  return normalizeUri(uri);
+}

@@ -1,0 +1,341 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { getBCMRRegistries, ipfsToGateway } from '../lib/bcmr';
+
+let registries = [];
+let error = '';
+
+try {
+  registries = await getBCMRRegistries();
+} catch (e) {
+  error = e instanceof Error ? e.message : 'Unknown error occurred';
+  console.error('Error loading BCMR registries:', e);
+}
+
+// Helper to truncate hash
+function truncateHash(hash: string, length = 16): string {
+  if (hash.length <= length) return hash;
+  return `${hash.slice(0, length / 2)}...${hash.slice(-length / 2)}`;
+}
+---
+
+<MainLayout title="BCMR Registries">
+  <div class="bcmr-container">
+    <h1>BCMR Registries</h1>
+    <p class="subtitle">
+      Bitcoin Cash Metadata Registry announcements from the blockchain
+    </p>
+
+    {error && (
+      <div class="error-message">
+        <strong>Error:</strong> {error}
+      </div>
+    )}
+
+    {!error && registries.length === 0 && (
+      <div class="info-message">
+        No BCMR registries found on the blockchain.
+      </div>
+    )}
+
+    {!error && registries.length > 0 && (
+      <div class="stats">
+        <strong>Total Registries:</strong> {registries.length}
+      </div>
+    )}
+
+    {!error && registries.length > 0 && (
+      <div class="table-container">
+        <table class="bcmr-table">
+          <thead>
+            <tr>
+              <th>Token ID / Authbase</th>
+              <th>Block Height</th>
+              <th>Registry Hash</th>
+              <th>URIs</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {registries.map((registry) => (
+              <tr class={registry.isBurned ? 'burned' : ''}>
+                <td>
+                  <a
+                    href={`https://tokenexplorer.cash/?tokenId=${registry.tokenId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={registry.tokenId}
+                  >
+                    <code class="hash">
+                      {truncateHash(registry.tokenId)}
+                    </code>
+                  </a>
+                </td>
+                <td>
+                  {registry.blockHeight > 0 ? (
+                    <span class="block-height">{registry.blockHeight.toLocaleString()}</span>
+                  ) : (
+                    <span class="unconfirmed">Unconfirmed</span>
+                  )}
+                </td>
+                <td>
+                  <code class="hash small" title={registry.hash}>
+                    {truncateHash(registry.hash, 12)}
+                  </code>
+                </td>
+                <td class="uris-cell">
+                  {registry.uris.length === 0 ? (
+                    <span class="no-uris">No URIs</span>
+                  ) : (
+                    <div class="uri-list">
+                      {registry.uris.map((uri) => {
+                        const displayUri = uri.startsWith('ipfs://')
+                          ? uri
+                          : uri.length > 50
+                            ? `${uri.slice(0, 47)}...`
+                            : uri;
+                        const linkUri = ipfsToGateway(uri);
+                        const uriType = uri.startsWith('ipfs://') ? 'ipfs' : 'https';
+
+                        return (
+                          <div class="uri-item">
+                            <span class={`uri-badge ${uriType}`}>
+                              {uriType.toUpperCase()}
+                            </span>
+                            <a
+                              href={linkUri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="uri-link"
+                              title={uri}
+                            >
+                              {displayUri}
+                            </a>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </td>
+                <td>
+                  {registry.isBurned ? (
+                    <span class="status-badge burned">Burned</span>
+                  ) : registry.isValid ? (
+                    <span class="status-badge active">Active</span>
+                  ) : (
+                    <span class="status-badge invalid">Invalid</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+</MainLayout>
+
+<style>
+  .bcmr-container {
+    padding: 2rem;
+    max-width: 1600px;
+  }
+
+  h1 {
+    color: #fff;
+    margin: 0 0 0.5rem 0;
+    font-size: 2rem;
+  }
+
+  .subtitle {
+    color: #999;
+    margin: 0 0 2rem 0;
+    font-size: 1rem;
+  }
+
+  .error-message {
+    background: #ff4444;
+    color: white;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+  }
+
+  .info-message {
+    background: #2d2d2d;
+    color: #999;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+  }
+
+  .stats {
+    background: #2d2d2d;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    color: #fff;
+  }
+
+  .table-container {
+    overflow-x: auto;
+    background: #2d2d2d;
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .bcmr-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #fff;
+  }
+
+  .bcmr-table thead {
+    background: #1a1a1a;
+  }
+
+  .bcmr-table th {
+    padding: 1rem;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid #667eea;
+    white-space: nowrap;
+  }
+
+  .bcmr-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #3d3d3d;
+    vertical-align: top;
+  }
+
+  .bcmr-table tr:hover {
+    background: #252525;
+  }
+
+  .bcmr-table tr.burned {
+    opacity: 0.6;
+  }
+
+  a {
+    text-decoration: none;
+  }
+
+  a:hover .hash {
+    background: #667eea;
+    color: #fff;
+    transition: all 0.2s ease;
+  }
+
+  .hash {
+    font-family: 'Courier New', monospace;
+    background: #1a1a1a;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    color: #667eea;
+    display: inline-block;
+    cursor: pointer;
+  }
+
+  .hash.small {
+    font-size: 0.8rem;
+    color: #999;
+  }
+
+  .block-height {
+    color: #4ade80;
+    font-weight: 600;
+  }
+
+  .unconfirmed {
+    color: #fbbf24;
+    font-style: italic;
+  }
+
+  .uris-cell {
+    min-width: 300px;
+  }
+
+  .uri-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .uri-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .uri-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .uri-badge.ipfs {
+    background: #667eea;
+    color: white;
+  }
+
+  .uri-badge.https {
+    background: #4ade80;
+    color: #1a1a1a;
+  }
+
+  .uri-link {
+    color: #667eea;
+    text-decoration: none;
+    word-break: break-all;
+    font-size: 0.9rem;
+  }
+
+  .uri-link:hover {
+    text-decoration: underline;
+    color: #8b9cf8;
+  }
+
+  .no-uris {
+    color: #999;
+    font-style: italic;
+  }
+
+  .status-badge {
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    display: inline-block;
+  }
+
+  .status-badge.active {
+    background: #4ade80;
+    color: #1a1a1a;
+  }
+
+  .status-badge.burned {
+    background: #ef4444;
+    color: white;
+  }
+
+  .status-badge.invalid {
+    background: #fbbf24;
+    color: #1a1a1a;
+  }
+
+  @media (max-width: 1200px) {
+    .bcmr-table {
+      font-size: 0.9rem;
+    }
+
+    .bcmr-table th,
+    .bcmr-table td {
+      padding: 0.75rem;
+    }
+  }
+</style>
