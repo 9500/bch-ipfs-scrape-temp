@@ -398,14 +398,14 @@ export function ipfsToGateway(uri: string): string {
  * @param expectedHash - Expected SHA-256 hash of the JSON content
  * @param maxRetries - Maximum number of retries per URI (default: 2)
  * @param timeoutMs - Timeout in milliseconds (default: 2000)
- * @returns Parsed JSON object if valid, null if all attempts fail or hash mismatch
+ * @returns Object with parsed JSON and raw content if valid, null if all attempts fail or hash mismatch
  */
 export async function fetchAndValidateRegistry(
   uris: string[],
   expectedHash: string,
   maxRetries: number = 2,
   timeoutMs: number = 2000
-): Promise<any | null> {
+): Promise<{ json: any; rawContent: string } | null> {
   for (const uri of uris) {
     // Convert IPFS URIs to gateway URLs
     const fetchUrl = normalizeUri(uri);
@@ -454,8 +454,8 @@ export async function fetchAndValidateRegistry(
             return null;
           }
 
-          // Success!
-          return json;
+          // Success! Return both parsed JSON and raw content
+          return { json, rawContent };
         } catch (parseError) {
           console.warn(`JSON parse error from ${fetchUrl}:`, parseError);
           return null; // Invalid JSON - don't retry

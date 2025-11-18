@@ -186,11 +186,12 @@ async function extractIPFSLinks(
 
             // If not found locally or hash mismatch, fetch from network
             if (!registryJson) {
-              registryJson = await fetchAndValidateRegistry(registry.uris, registry.hash);
+              const fetchResult = await fetchAndValidateRegistry(registry.uris, registry.hash);
 
-              if (registryJson) {
-                // Save the JSON file
-                writeFileSync(jsonPath, JSON.stringify(registryJson, null, 2), 'utf-8');
+              if (fetchResult) {
+                // Save the raw JSON content (preserves exact formatting and hash)
+                writeFileSync(jsonPath, fetchResult.rawContent, 'utf-8');
+                registryJson = fetchResult.json;
               }
             }
 
