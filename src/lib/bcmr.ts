@@ -396,15 +396,15 @@ export function ipfsToGateway(uri: string): string {
  *
  * @param uris - Array of URIs to try (IPFS and HTTPS)
  * @param expectedHash - Expected SHA-256 hash of the JSON content
- * @param maxRetries - Maximum number of retries per URI (default: 3)
- * @param timeoutMs - Timeout in milliseconds (default: 30000)
+ * @param maxRetries - Maximum number of retries per URI (default: 2)
+ * @param timeoutMs - Timeout in milliseconds (default: 2000)
  * @returns Parsed JSON object if valid, null if all attempts fail or hash mismatch
  */
 export async function fetchAndValidateRegistry(
   uris: string[],
   expectedHash: string,
-  maxRetries: number = 3,
-  timeoutMs: number = 30000
+  maxRetries: number = 2,
+  timeoutMs: number = 2000
 ): Promise<any | null> {
   for (const uri of uris) {
     // Convert IPFS URIs to gateway URLs

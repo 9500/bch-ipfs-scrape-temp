@@ -27,8 +27,8 @@ BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain
 - **SHA-256 hash validation** against on-chain data
 - **Structure validation** (must have `identities` object)
 - **Saves valid JSON files** to specified folder
-- **Retry logic** with exponential backoff (3 attempts per URI)
-- **30-second timeout** per request
+- **Retry logic** with exponential backoff (2 attempts per URI)
+- **2-second timeout** per request
 - **Progress reporting** with fetch statistics
 
 ## Project Structure
@@ -207,7 +207,7 @@ npm run dev
 ## Performance Notes
 
 - **Authchain resolution**: Sequential processing of 3000+ registries may take several minutes due to multiple Fulcrum queries per registry. Future optimization with concurrency/batching recommended for large datasets.
-- **JSON fetching** (`--fetch-json`): Can be very slow as it fetches from IPFS gateways. Each registry requires HTTP requests with 30-second timeouts. Expect significant time for large datasets.
+- **JSON fetching** (`--fetch-json`): Can be very slow as it fetches from IPFS gateways. Each registry requires HTTP requests with 2-second timeouts and up to 2 retry attempts. Expect significant time for large datasets.
 
 ## License
 
