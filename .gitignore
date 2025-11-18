@@ -22,3 +22,8 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# generated output files
+bcmr-registries/
+bcmr-ipfs-links.txt
+*.json.txt
