@@ -1,31 +1,48 @@
-# BCMR IPFS Link Extractor
+# BCMR IPFS Link Extractor & Validator
 
-A Node.js console application that extracts IPFS links from Bitcoin Cash Metadata Registry (BCMR) announcements on the blockchain.
+A Node.js console application that extracts and validates IPFS links from Bitcoin Cash Metadata Registry (BCMR) announcements on the blockchain, with full authchain resolution according to the BCMR specification.
 
 ## What is BCMR?
 
-BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain metadata about Bitcoin Cash tokens and identities. This tool queries the blockchain via Chaingraph to find all BCMR announcements and extracts the IPFS links they contain.
+BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain metadata about Bitcoin Cash tokens and identities. This tool queries the blockchain via Chaingraph to find all BCMR announcements, resolves authchains to find the current registry state, and optionally fetches and validates the registry JSON files.
 
 ## Features
 
-- Fetches BCMR registry data from Chaingraph GraphQL API
-- Parses Bitcoin Script OP_RETURN outputs to extract metadata
-- Filters out burned and invalid registries
-- Extracts only IPFS URIs (excludes HTTPS URLs)
-- Supports multiple output formats (plain text or JSON)
-- Configurable output filename
+### Core Functionality
+- **Fetches BCMR registry data** from Chaingraph GraphQL API
+- **Parses Bitcoin Script OP_RETURN** outputs to extract metadata
+- **Full authchain resolution** via Fulcrum Electrum protocol
+  - Follows spending chain from authbase to authhead
+  - Identifies active vs superseded registries
+  - Tracks chain length and validation status
+- **Filters registries**:
+  - Burned registries (OP_RETURN at output index 0)
+  - Invalid registries (no URIs)
+  - Inactive registries (authhead output spent)
+- **Extracts IPFS URIs** (excludes HTTPS URLs)
+- **Supports multiple output formats** (plain text or JSON with metadata)
+
+### Optional JSON Validation (--fetch-json)
+- **Fetches registry JSON** from IPFS gateways and HTTPS URIs
+- **SHA-256 hash validation** against on-chain data
+- **Structure validation** (must have `identities` object)
+- **Saves valid JSON files** to specified folder
+- **Retry logic** with exponential backoff (3 attempts per URI)
+- **30-second timeout** per request
+- **Progress reporting** with fetch statistics
 
 ## Project Structure
 
 ```text
 /
 ├── src/
-│   ├── index.ts          # Main console app entry point
+│   ├── index.ts               # Main console app entry point
 │   └── lib/
-│       └── bcmr.ts       # BCMR parsing and fetching library
-├── .env                  # Environment configuration
-├── package.json          # Project dependencies and scripts
-└── tsconfig.json         # TypeScript configuration
+│       ├── bcmr.ts            # BCMR parsing, authchain resolution, JSON validation
+│       └── fulcrum-client.ts  # Fulcrum Electrum protocol client
+├── .env                       # Environment configuration
+├── package.json               # Project dependencies and scripts
+└── tsconfig.json              # TypeScript configuration
 ```
 
 ## Installation
@@ -39,7 +56,7 @@ npm install
 
 3. Configure environment variables:
 
-Copy `.env.example` to `.env` and update the `CHAINGRAPH_URL` with your Chaingraph server endpoint:
+Copy `.env.example` to `.env` and configure both Chaingraph and Fulcrum endpoints:
 
 ```bash
 cp .env.example .env
@@ -47,8 +64,14 @@ cp .env.example .env
 
 Edit `.env`:
 ```
+# Chaingraph GraphQL endpoint
 CHAINGRAPH_URL=http://your-chaingraph-server:8088/v1/graphql
+
+# Fulcrum WebSocket endpoint for authchain resolution
+FULCRUM_WS_URL=ws://your-fulcrum-server:50003
 ```
+
+**Note**: Both CHAINGRAPH_URL and FULCRUM_WS_URL are required.
 
 ## Usage
 
@@ -60,7 +83,7 @@ npm run build
 
 ### Run the application
 
-Basic usage (saves to `bcmr-ipfs-links.txt` in plain text format):
+Basic usage (IPFS links only, saves to `bcmr-ipfs-links.txt`):
 
 ```bash
 npm start
@@ -72,28 +95,40 @@ npm start
 |--------|-------|-------------|---------|
 | `--format` | `-f` | Output format: `txt` or `json` | `txt` |
 | `--output` | `-o` | Output filename | `bcmr-ipfs-links.txt` |
+| `--fetch-json` | - | Fetch and validate registry JSON files | `false` (disabled) |
+| `--json-folder` | - | Folder to save registry JSON files | `./bcmr-registries` |
 | `--help` | `-h` | Show help message | - |
 
 ### Examples
 
-Save as plain text (one IPFS link per line):
+**Basic usage** (IPFS links only, no JSON fetching):
 ```bash
 npm start
 ```
 
-Save as JSON with metadata:
+**Save as JSON** with authchain metadata:
 ```bash
 npm start -- --format json
 ```
 
-Custom output filename:
+**Fetch and validate registry JSON** (saves to `./bcmr-registries/`):
 ```bash
-npm start -- --output my-ipfs-links.txt
+npm start -- --fetch-json
 ```
 
-JSON format with custom filename:
+**Custom JSON storage folder**:
 ```bash
-npm start -- -f json -o output.json
+npm start -- --fetch-json --json-folder ./my-registries
+```
+
+**Full featured** (JSON format with registry validation):
+```bash
+npm start -- --format json --fetch-json --output validated-registries.json
+```
+
+**Custom output filename**:
+```bash
+npm start -- --output my-links.txt
 ```
 
 ## Output Formats
@@ -107,23 +142,41 @@ ipfs://QmHash3...
 ```
 
 ### JSON Format (`json`)
-Array of objects with metadata:
+Array of objects with metadata (includes authchain and optional validation info):
 ```json
 [
   {
     "tokenId": "transaction_hash_1",
     "blockHeight": 850000,
     "hash": "sha256_hash",
-    "ipfsUri": "ipfs://QmHash1..."
+    "ipfsUri": "ipfs://QmHash1...",
+    "authchainLength": 1,
+    "isActive": true,
+    "registryValid": true,
+    "registryFetched": true,
+    "jsonPath": "./bcmr-registries/transaction_hash_1.json"
   },
   {
     "tokenId": "transaction_hash_2",
     "blockHeight": 850001,
     "hash": "sha256_hash",
-    "ipfsUri": "ipfs://QmHash2..."
+    "ipfsUri": "ipfs://QmHash2...",
+    "authchainLength": 3,
+    "isActive": true
   }
 ]
 ```
+
+**Fields**:
+- `tokenId`: Transaction hash (authbase)
+- `blockHeight`: Block height of the authbase transaction
+- `hash`: SHA-256 hash from the BCMR OP_RETURN
+- `ipfsUri`: IPFS link in `ipfs://` format
+- `authchainLength`: Number of transactions in the authchain
+- `isActive`: Whether the registry is active (authhead unspent)
+- `registryValid`: (if `--fetch-json`) Hash validation result
+- `registryFetched`: (if `--fetch-json`) Whether JSON was downloaded
+- `jsonPath`: (if `--fetch-json`) Path to saved JSON file
 
 ## Filtering Rules
 
@@ -131,8 +184,10 @@ The application applies the following filters:
 
 - ✅ Includes: Valid registries with at least one URI
 - ✅ Includes: Only IPFS URIs (`ipfs://` protocol)
-- ❌ Excludes: Burned registries (output index 0)
+- ✅ Includes: Active registries (authhead output 0 unspent)
+- ❌ Excludes: Burned registries (OP_RETURN at output index 0)
 - ❌ Excludes: Invalid registries (no URIs)
+- ❌ Excludes: Inactive registries (authhead output spent/superseded)
 - ❌ Excludes: HTTPS and other non-IPFS URLs
 
 ## Development
@@ -144,9 +199,15 @@ npm run dev
 
 ## Requirements
 
-- Node.js 18+ (for native `fetch` support)
-- TypeScript 5+
-- Access to a Chaingraph server
+- **Node.js 18+** (for native `fetch` and `AbortController` support)
+- **TypeScript 5+**
+- **Access to a Chaingraph server** (GraphQL endpoint)
+- **Access to a Fulcrum server** (Electrum WebSocket endpoint)
+
+## Performance Notes
+
+- **Authchain resolution**: Sequential processing of 3000+ registries may take several minutes due to multiple Fulcrum queries per registry. Future optimization with concurrency/batching recommended for large datasets.
+- **JSON fetching** (`--fetch-json`): Can be very slow as it fetches from IPFS gateways. Each registry requires HTTP requests with 30-second timeouts. Expect significant time for large datasets.
 
 ## License
 
