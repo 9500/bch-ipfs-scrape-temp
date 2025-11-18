@@ -3,7 +3,8 @@
  * Caches authchain resolution results to avoid redundant Fulcrum queries
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
 
 /**
  * Cache entry for a single authchain
@@ -83,6 +84,10 @@ export function loadAuthchainCache(cachePath: string): AuthchainCache {
  */
 export function saveAuthchainCache(cache: AuthchainCache, cachePath: string): void {
   try {
+    // Ensure the directory exists
+    const dir = dirname(cachePath);
+    mkdirSync(dir, { recursive: true });
+
     const jsonContent = JSON.stringify(cache, null, 2);
     writeFileSync(cachePath, jsonContent, 'utf-8');
   } catch (error) {

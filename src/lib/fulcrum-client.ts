@@ -1,6 +1,6 @@
 /**
  * Fulcrum Electrum Protocol Client
- * Connects to Fulcrum server for blockchain queries
+ * Connects to Fulcrum server for blockchain queries with connection pooling
  */
 
 import WebSocket from 'ws';
@@ -50,57 +50,233 @@ interface HistoryItem {
   fee?: number;
 }
 
-/**
- * Make a call to Fulcrum using Electrum protocol over WebSocket
- */
-async function electrumCall(method: string, params: any[] = []): Promise<any> {
-  const FULCRUM_WS_URL = process.env.FULCRUM_WS_URL;
+interface PendingRequest {
+  method: string;
+  params: any[];
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  id: number;
+}
 
-  if (!FULCRUM_WS_URL) {
-    throw new Error('FULCRUM_WS_URL environment variable is not set');
+/**
+ * Connection Pool for Fulcrum WebSocket connections
+ */
+class FulcrumConnectionPool {
+  private connections: WebSocket[] = [];
+  private availableConnections: WebSocket[] = [];
+  private pendingRequests: Map<number, PendingRequest> = new Map();
+  private requestQueue: PendingRequest[] = [];
+  private nextRequestId = 1;
+  private poolSize: number;
+  private wsUrl: string;
+  private connectionPromises: Map<WebSocket, Promise<void>> = new Map();
+  private isClosing = false;
+
+  constructor(poolSize = 10) {
+    const FULCRUM_WS_URL = process.env.FULCRUM_WS_URL;
+    if (!FULCRUM_WS_URL) {
+      throw new Error('FULCRUM_WS_URL environment variable is not set');
+    }
+    this.wsUrl = FULCRUM_WS_URL;
+    this.poolSize = poolSize;
   }
 
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(FULCRUM_WS_URL);
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error('Fulcrum connection timeout'));
-    }, 10000);
+  /**
+   * Initialize the connection pool
+   */
+  async initialize(): Promise<void> {
+    const promises = [];
+    for (let i = 0; i < this.poolSize; i++) {
+      promises.push(this.createConnection());
+    }
+    await Promise.all(promises);
+  }
 
-    ws.on('open', () => {
-      const request = {
-        jsonrpc: '2.0',
-        id: 1,
-        method,
-        params,
-      };
-      ws.send(JSON.stringify(request));
-    });
+  /**
+   * Create a new WebSocket connection
+   */
+  private async createConnection(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(this.wsUrl);
 
-    ws.on('message', (data: WebSocket.Data) => {
-      clearTimeout(timeout);
-      try {
-        const response: ElectrumResponse = JSON.parse(data.toString());
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Fulcrum connection timeout during pool initialization'));
+      }, 10000);
 
-        if (response.error) {
-          ws.close();
-          reject(new Error(`Fulcrum error: ${response.error.message}`));
-          return;
+      ws.on('open', () => {
+        clearTimeout(timeout);
+        this.connections.push(ws);
+        this.availableConnections.push(ws);
+        this.setupMessageHandler(ws);
+        resolve();
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      ws.on('close', () => {
+        // Remove from available connections
+        const availableIndex = this.availableConnections.indexOf(ws);
+        if (availableIndex !== -1) {
+          this.availableConnections.splice(availableIndex, 1);
         }
 
-        ws.close();
-        resolve(response.result);
+        // Remove from all connections
+        const index = this.connections.indexOf(ws);
+        if (index !== -1) {
+          this.connections.splice(index, 1);
+        }
+
+        // Recreate connection if pool is still active and not closing
+        if (!this.isClosing && this.connections.length < this.poolSize) {
+          this.createConnection().catch((err) => {
+            console.error('Failed to recreate connection:', err);
+          });
+        }
+      });
+    });
+  }
+
+  /**
+   * Setup message handler for a connection
+   */
+  private setupMessageHandler(ws: WebSocket): void {
+    ws.on('message', (data: WebSocket.Data) => {
+      try {
+        const response: ElectrumResponse = JSON.parse(data.toString());
+        const pending = this.pendingRequests.get(Number(response.id));
+
+        if (pending) {
+          this.pendingRequests.delete(Number(response.id));
+
+          if (response.error) {
+            pending.reject(new Error(`Fulcrum error: ${response.error.message}`));
+          } else {
+            pending.resolve(response.result);
+          }
+
+          // Mark connection as available and process queue
+          if (!this.availableConnections.includes(ws)) {
+            this.availableConnections.push(ws);
+          }
+          this.processQueue();
+        }
       } catch (e) {
-        ws.close();
-        reject(e);
+        console.error('Error parsing Fulcrum response:', e);
       }
     });
+  }
 
-    ws.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
+  /**
+   * Make a call using a pooled connection
+   */
+  async call(method: string, params: any[] = []): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const id = this.nextRequestId++;
+      const request: PendingRequest = {
+        method,
+        params,
+        resolve,
+        reject,
+        id,
+      };
+
+      this.requestQueue.push(request);
+      this.processQueue();
     });
-  });
+  }
+
+  /**
+   * Process queued requests
+   */
+  private processQueue(): void {
+    while (this.requestQueue.length > 0 && this.availableConnections.length > 0) {
+      const request = this.requestQueue.shift()!;
+      const ws = this.availableConnections.shift()!;
+
+      // Add to pending requests
+      this.pendingRequests.set(request.id, request);
+
+      // Send request
+      const message = {
+        jsonrpc: '2.0',
+        id: request.id,
+        method: request.method,
+        params: request.params,
+      };
+
+      try {
+        ws.send(JSON.stringify(message));
+      } catch (error) {
+        // If send fails, reject and return connection to pool
+        this.pendingRequests.delete(request.id);
+        request.reject(error instanceof Error ? error : new Error('Failed to send request'));
+        this.availableConnections.push(ws);
+      }
+    }
+  }
+
+  /**
+   * Get pool statistics
+   */
+  getStats(): { total: number; available: number; pending: number; queued: number } {
+    return {
+      total: this.connections.length,
+      available: this.availableConnections.length,
+      pending: this.pendingRequests.size,
+      queued: this.requestQueue.length,
+    };
+  }
+
+  /**
+   * Close all connections
+   */
+  async close(): Promise<void> {
+    this.isClosing = true;
+
+    for (const ws of this.connections) {
+      ws.close();
+    }
+    this.connections = [];
+    this.availableConnections = [];
+    this.pendingRequests.clear();
+    this.requestQueue = [];
+  }
+}
+
+// Global connection pool instance
+let globalPool: FulcrumConnectionPool | null = null;
+
+/**
+ * Get or create the global connection pool
+ */
+export async function getConnectionPool(poolSize = 10): Promise<FulcrumConnectionPool> {
+  if (!globalPool) {
+    globalPool = new FulcrumConnectionPool(poolSize);
+    await globalPool.initialize();
+  }
+  return globalPool;
+}
+
+/**
+ * Close the global connection pool
+ */
+export async function closeConnectionPool(): Promise<void> {
+  if (globalPool) {
+    await globalPool.close();
+    globalPool = null;
+  }
+}
+
+/**
+ * Make a call to Fulcrum using the connection pool
+ */
+async function electrumCall(method: string, params: any[] = []): Promise<any> {
+  const pool = await getConnectionPool();
+  return pool.call(method, params);
 }
 
 /**

@@ -395,15 +395,18 @@ async function resolveAuthchain(
  * @param options.useCache - Whether to use cache (default: true)
  * @param options.cachePath - Path to cache file (default: ./bcmr-registries/.authchain-cache.json)
  * @param options.verbose - Enable verbose logging for detailed diagnostics (default: false)
+ * @param options.concurrency - Number of parallel authchain resolutions (default: 50)
  */
 export async function getBCMRRegistries(options?: {
   useCache?: boolean;
   cachePath?: string;
   verbose?: boolean;
+  concurrency?: number;
 }): Promise<BCMRRegistry[]> {
   const useCache = options?.useCache !== false;
   const cachePath = options?.cachePath || './bcmr-registries/.authchain-cache.json';
   const verbose = options?.verbose || false;
+  const concurrency = options?.concurrency || 50;
 
   try {
     const CHAINGRAPH_URL = process.env.CHAINGRAPH_URL || '';
@@ -480,25 +483,19 @@ export async function getBCMRRegistries(options?: {
     let partialCacheHits = 0;   // Active chains continued from cache (N queries)
     let cacheMisses = 0;        // No cache entry (full walk)
     let totalFulcrumQueries = 0;
+    let processedCount = 0;
 
-    console.log(`Resolving authchains for ${validOutputs.length} registries...`);
+    console.log(`Resolving authchains for ${validOutputs.length} registries (concurrency: ${concurrency})...`);
     const startTime = Date.now();
 
-    for (let i = 0; i < validOutputs.length; i++) {
-      const output = validOutputs[i];
-
-      // Progress indicator every 100 registries
-      if ((i + 1) % 100 === 0) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const rate = ((i + 1) / (Date.now() - startTime) * 1000).toFixed(1);
-        console.log(`  Resolving authchains... ${i + 1}/${validOutputs.length} (${elapsed}s, ${rate} reg/s)`);
-      }
-
+    /**
+     * Process a single output
+     */
+    const processOutput = async (output: BCMROutput, index: number): Promise<BCMRRegistry | null> => {
       const parsed = parseBCMRBytecode(output.locking_bytecode);
 
       if (!parsed) {
-        // Failed to parse, skip
-        continue;
+        return null;
       }
 
       // Strip hex prefix from transaction hash
@@ -506,41 +503,6 @@ export async function getBCMRRegistries(options?: {
 
       // Resolve authchain with caching
       const authchainResult = await resolveAuthchain(txHash, oldCache);
-
-      // Update detailed cache statistics
-      totalFulcrumQueries += authchainResult.queriesUsed;
-
-      switch (authchainResult.cacheHitType) {
-        case 'perfect':
-          perfectCacheHits++;
-          break;
-        case 'good':
-          goodCacheHits++;
-          break;
-        case 'partial':
-          partialCacheHits++;
-          break;
-        case 'miss':
-          cacheMisses++;
-          break;
-      }
-
-      // Verbose logging
-      if (verbose) {
-        const hitTypeDesc = {
-          perfect: 'perfect hit (0 queries)',
-          good: `good hit (1 query)`,
-          partial: `partial hit (${authchainResult.queriesUsed} queries)`,
-          miss: `miss (${authchainResult.queriesUsed} queries)`,
-        }[authchainResult.cacheHitType];
-
-        console.log(
-          `  [${i + 1}/${validOutputs.length}] ${txHash.substring(0, 8)}... ${hitTypeDesc}`
-        );
-      }
-
-      // Store in new cache
-      newCache.entries[txHash] = authchainResult.entry;
 
       // Get block height (if confirmed) - convert string to number
       const blockHeight = output.transaction.block_inclusions[0]?.block.height
@@ -550,7 +512,7 @@ export async function getBCMRRegistries(options?: {
       // Check if output is burned (OP_RETURN at index 0)
       const isBurned = isOutputBurned(output);
 
-      registries.push({
+      return {
         authbase: txHash,
         authhead: authchainResult.entry.authhead,
         tokenId: txHash,
@@ -558,10 +520,83 @@ export async function getBCMRRegistries(options?: {
         hash: parsed.hash,
         uris: parsed.uris,
         isBurned,
-        isValid: parsed.uris.length > 0, // Valid if has at least one URI
+        isValid: parsed.uris.length > 0,
         authchainLength: authchainResult.entry.chainLength,
         isAuthheadUnspent: authchainResult.entry.isActive,
-      });
+        _authchainResult: authchainResult, // Temp field for statistics
+      } as any;
+    };
+
+    /**
+     * Process registries in parallel with concurrency control
+     */
+    const processBatch = async (batch: BCMROutput[], batchStartIndex: number): Promise<void> => {
+      const results = await Promise.all(
+        batch.map((output, i) => processOutput(output, batchStartIndex + i))
+      );
+
+      // Update statistics and cache
+      for (const result of results) {
+        if (result) {
+          const authchainResult = (result as any)._authchainResult;
+          delete (result as any)._authchainResult;
+
+          // Update cache statistics
+          totalFulcrumQueries += authchainResult.queriesUsed;
+
+          switch (authchainResult.cacheHitType) {
+            case 'perfect':
+              perfectCacheHits++;
+              break;
+            case 'good':
+              goodCacheHits++;
+              break;
+            case 'partial':
+              partialCacheHits++;
+              break;
+            case 'miss':
+              cacheMisses++;
+              break;
+          }
+
+          // Store in new cache
+          newCache.entries[result.tokenId] = authchainResult.entry;
+
+          // Add to registries
+          registries.push(result);
+
+          // Verbose logging
+          if (verbose) {
+            const hitTypeDesc: Record<string, string> = {
+              perfect: 'perfect hit (0 queries)',
+              good: `good hit (1 query)`,
+              partial: `partial hit (${authchainResult.queriesUsed} queries)`,
+              miss: `miss (${authchainResult.queriesUsed} queries)`,
+            };
+
+            console.log(
+              `  [${processedCount + 1}/${validOutputs.length}] ${result.tokenId.substring(0, 8)}... ${hitTypeDesc[authchainResult.cacheHitType]}`
+            );
+          }
+
+          processedCount++;
+        } else {
+          processedCount++;
+        }
+      }
+
+      // Progress reporting
+      if (processedCount % 100 === 0 || processedCount === validOutputs.length) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const rate = ((processedCount / (Date.now() - startTime)) * 1000).toFixed(1);
+        console.log(`  Resolving authchains... ${processedCount}/${validOutputs.length} (${elapsed}s, ${rate} reg/s)`);
+      }
+    };
+
+    // Process in batches with concurrency control
+    for (let i = 0; i < validOutputs.length; i += concurrency) {
+      const batch = validOutputs.slice(i, i + concurrency);
+      await processBatch(batch, i);
     }
 
     const endTime = Date.now();
