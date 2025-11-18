@@ -219,23 +219,36 @@ function isOutputBurned(output: BCMROutput): boolean {
 }
 
 /**
+ * Result from authchain resolution with performance metrics
+ */
+interface AuthchainResolutionResult {
+  entry: AuthchainCacheEntry;
+  queriesUsed: number;
+  cacheHitType: 'perfect' | 'good' | 'partial' | 'miss';
+}
+
+/**
  * Resolve authchain to find the current authhead
  * Follows the chain of transactions spending output 0 until an unspent output is found
  * Uses cache to avoid redundant queries when possible
  *
  * @param authbaseTxid - Starting transaction hash (authbase)
  * @param cache - Optional cache to check for existing authchain data
- * @returns Cache entry with authhead, chain length, and active status
+ * @returns Resolution result with cache entry, query count, and hit type
  */
 async function resolveAuthchain(
   authbaseTxid: string,
   cache?: AuthchainCache
-): Promise<AuthchainCacheEntry> {
+): Promise<AuthchainResolutionResult> {
   const cachedEntry = cache?.entries[authbaseTxid];
 
   // OPTIMIZATION 1: Inactive chains never become active again - perfect cache!
   if (cachedEntry && !cachedEntry.isActive) {
-    return cachedEntry; // 0 Fulcrum queries
+    return {
+      entry: cachedEntry,
+      queriesUsed: 0,
+      cacheHitType: 'perfect',
+    };
   }
 
   // OPTIMIZATION 2: For active chains, check if cached authhead is still unspent
@@ -245,28 +258,38 @@ async function resolveAuthchain(
     if (spendingTx === null) {
       // Still unspent - just update timestamp
       return {
-        ...cachedEntry,
-        lastCheckedTimestamp: Date.now(),
-      }; // 1 Fulcrum query
+        entry: {
+          ...cachedEntry,
+          lastCheckedTimestamp: Date.now(),
+        },
+        queriesUsed: 1,
+        cacheHitType: 'good',
+      };
     }
 
     // Authhead was spent! Continue from here instead of from authbase
     let currentTxid = spendingTx;
     let chainLength = cachedEntry.chainLength + 1;
     const maxChainLength = 1000;
+    let queriesUsed = 1; // Initial check query
 
     try {
       while (chainLength < maxChainLength) {
         const nextSpendingTx = await getOutputSpendingTx(currentTxid, 0);
+        queriesUsed++;
 
         if (nextSpendingTx === null) {
           // Found new authhead
           return {
-            authbase: authbaseTxid,
-            authhead: currentTxid,
-            chainLength,
-            isActive: true,
-            lastCheckedTimestamp: Date.now(),
+            entry: {
+              authbase: authbaseTxid,
+              authhead: currentTxid,
+              chainLength,
+              isActive: true,
+              lastCheckedTimestamp: Date.now(),
+            },
+            queriesUsed,
+            cacheHitType: 'partial',
           };
         }
 
@@ -276,20 +299,28 @@ async function resolveAuthchain(
 
       // Max chain length exceeded
       return {
-        authbase: authbaseTxid,
-        authhead: currentTxid,
-        chainLength,
-        isActive: false,
-        lastCheckedTimestamp: Date.now(),
+        entry: {
+          authbase: authbaseTxid,
+          authhead: currentTxid,
+          chainLength,
+          isActive: false,
+          lastCheckedTimestamp: Date.now(),
+        },
+        queriesUsed,
+        cacheHitType: 'partial',
       };
     } catch (error) {
       // Error during continuation
       return {
-        authbase: authbaseTxid,
-        authhead: currentTxid,
-        chainLength,
-        isActive: false,
-        lastCheckedTimestamp: Date.now(),
+        entry: {
+          authbase: authbaseTxid,
+          authhead: currentTxid,
+          chainLength,
+          isActive: false,
+          lastCheckedTimestamp: Date.now(),
+        },
+        queriesUsed,
+        cacheHitType: 'partial',
       };
     }
   }
@@ -298,19 +329,25 @@ async function resolveAuthchain(
   let currentTxid = authbaseTxid;
   let chainLength = 1;
   const maxChainLength = 1000;
+  let queriesUsed = 0;
 
   try {
     while (chainLength < maxChainLength) {
       const spendingTxid = await getOutputSpendingTx(currentTxid, 0);
+      queriesUsed++;
 
       if (spendingTxid === null) {
         // Output 0 is unspent - this is the authhead
         return {
-          authbase: authbaseTxid,
-          authhead: currentTxid,
-          chainLength,
-          isActive: true,
-          lastCheckedTimestamp: Date.now(),
+          entry: {
+            authbase: authbaseTxid,
+            authhead: currentTxid,
+            chainLength,
+            isActive: true,
+            lastCheckedTimestamp: Date.now(),
+          },
+          queriesUsed,
+          cacheHitType: 'miss',
         };
       }
 
@@ -324,20 +361,28 @@ async function resolveAuthchain(
       `Warning: Authchain exceeded maximum length of ${maxChainLength} for ${authbaseTxid}`
     );
     return {
-      authbase: authbaseTxid,
-      authhead: currentTxid,
-      chainLength,
-      isActive: false,
-      lastCheckedTimestamp: Date.now(),
+      entry: {
+        authbase: authbaseTxid,
+        authhead: currentTxid,
+        chainLength,
+        isActive: false,
+        lastCheckedTimestamp: Date.now(),
+      },
+      queriesUsed,
+      cacheHitType: 'miss',
     };
   } catch (error) {
     // Return the current position with isActive=false to indicate error
     return {
-      authbase: authbaseTxid,
-      authhead: currentTxid,
-      chainLength,
-      isActive: false,
-      lastCheckedTimestamp: Date.now(),
+      entry: {
+        authbase: authbaseTxid,
+        authhead: currentTxid,
+        chainLength,
+        isActive: false,
+        lastCheckedTimestamp: Date.now(),
+      },
+      queriesUsed,
+      cacheHitType: 'miss',
     };
   }
 }
@@ -349,13 +394,16 @@ async function resolveAuthchain(
  * @param options - Optional configuration
  * @param options.useCache - Whether to use cache (default: true)
  * @param options.cachePath - Path to cache file (default: ./bcmr-registries/.authchain-cache.json)
+ * @param options.verbose - Enable verbose logging for detailed diagnostics (default: false)
  */
 export async function getBCMRRegistries(options?: {
   useCache?: boolean;
   cachePath?: string;
+  verbose?: boolean;
 }): Promise<BCMRRegistry[]> {
   const useCache = options?.useCache !== false;
   const cachePath = options?.cachePath || './bcmr-registries/.authchain-cache.json';
+  const verbose = options?.verbose || false;
 
   try {
     const CHAINGRAPH_URL = process.env.CHAINGRAPH_URL || '';
@@ -369,11 +417,29 @@ export async function getBCMRRegistries(options?: {
     if (useCache) {
       oldCache = loadAuthchainCache(cachePath);
       const stats = getCacheStats(oldCache);
+
       if (stats.totalEntries > 0) {
+        // Calculate cache age
+        const timestamps = Object.values(oldCache.entries).map(e => e.lastCheckedTimestamp);
+        const oldestTimestamp = Math.min(...timestamps);
+        const newestTimestamp = Math.max(...timestamps);
+        const ageHours = ((Date.now() - oldestTimestamp) / (1000 * 60 * 60)).toFixed(1);
+        const newestAgeHours = ((Date.now() - newestTimestamp) / (1000 * 60 * 60)).toFixed(1);
+
         console.log(
-          `Loaded authchain cache: ${stats.totalEntries} entries (${stats.activeEntries} active, ${stats.inactiveEntries} inactive)`
+          `Loaded authchain cache from ${cachePath}`
         );
+        console.log(
+          `  ${stats.totalEntries} entries (${stats.activeEntries} active, ${stats.inactiveEntries} inactive)`
+        );
+        console.log(
+          `  Cache age: oldest ${ageHours}h, newest ${newestAgeHours}h`
+        );
+      } else {
+        console.log(`Authchain cache enabled (building new cache at ${cachePath})`);
       }
+    } else {
+      console.log('Authchain cache disabled (--no-cache)');
     }
 
     const response = await fetch(CHAINGRAPH_URL, {
@@ -408,19 +474,24 @@ export async function getBCMRRegistries(options?: {
     const newCache = createEmptyCache();
     const registries: BCMRRegistry[] = [];
 
-    // Track cache performance
-    let cacheHits = 0;
-    let cacheMisses = 0;
-    let inactiveCacheHits = 0;
+    // Track detailed cache performance
+    let perfectCacheHits = 0;   // Inactive chains (0 queries)
+    let goodCacheHits = 0;      // Active chains still unspent (1 query)
+    let partialCacheHits = 0;   // Active chains continued from cache (N queries)
+    let cacheMisses = 0;        // No cache entry (full walk)
+    let totalFulcrumQueries = 0;
 
     console.log(`Resolving authchains for ${validOutputs.length} registries...`);
+    const startTime = Date.now();
 
     for (let i = 0; i < validOutputs.length; i++) {
       const output = validOutputs[i];
 
       // Progress indicator every 100 registries
       if ((i + 1) % 100 === 0) {
-        console.log(`  Resolving authchains... ${i + 1}/${validOutputs.length}`);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const rate = ((i + 1) / (Date.now() - startTime) * 1000).toFixed(1);
+        console.log(`  Resolving authchains... ${i + 1}/${validOutputs.length} (${elapsed}s, ${rate} reg/s)`);
       }
 
       const parsed = parseBCMRBytecode(output.locking_bytecode);
@@ -433,25 +504,43 @@ export async function getBCMRRegistries(options?: {
       // Strip hex prefix from transaction hash
       const txHash = stripHexPrefix(output.transaction_hash);
 
-      // Track if this was a cache hit
-      const hadCachedEntry = oldCache?.entries[txHash] !== undefined;
-      const wasInactive = oldCache?.entries[txHash]?.isActive === false;
-
       // Resolve authchain with caching
       const authchainResult = await resolveAuthchain(txHash, oldCache);
 
-      // Update cache statistics
-      if (hadCachedEntry) {
-        cacheHits++;
-        if (wasInactive) {
-          inactiveCacheHits++;
-        }
-      } else {
-        cacheMisses++;
+      // Update detailed cache statistics
+      totalFulcrumQueries += authchainResult.queriesUsed;
+
+      switch (authchainResult.cacheHitType) {
+        case 'perfect':
+          perfectCacheHits++;
+          break;
+        case 'good':
+          goodCacheHits++;
+          break;
+        case 'partial':
+          partialCacheHits++;
+          break;
+        case 'miss':
+          cacheMisses++;
+          break;
+      }
+
+      // Verbose logging
+      if (verbose) {
+        const hitTypeDesc = {
+          perfect: 'perfect hit (0 queries)',
+          good: `good hit (1 query)`,
+          partial: `partial hit (${authchainResult.queriesUsed} queries)`,
+          miss: `miss (${authchainResult.queriesUsed} queries)`,
+        }[authchainResult.cacheHitType];
+
+        console.log(
+          `  [${i + 1}/${validOutputs.length}] ${txHash.substring(0, 8)}... ${hitTypeDesc}`
+        );
       }
 
       // Store in new cache
-      newCache.entries[txHash] = authchainResult;
+      newCache.entries[txHash] = authchainResult.entry;
 
       // Get block height (if confirmed) - convert string to number
       const blockHeight = output.transaction.block_inclusions[0]?.block.height
@@ -463,26 +552,52 @@ export async function getBCMRRegistries(options?: {
 
       registries.push({
         authbase: txHash,
-        authhead: authchainResult.authhead,
+        authhead: authchainResult.entry.authhead,
         tokenId: txHash,
         blockHeight,
         hash: parsed.hash,
         uris: parsed.uris,
         isBurned,
         isValid: parsed.uris.length > 0, // Valid if has at least one URI
-        authchainLength: authchainResult.chainLength,
-        isAuthheadUnspent: authchainResult.isActive,
+        authchainLength: authchainResult.entry.chainLength,
+        isAuthheadUnspent: authchainResult.entry.isActive,
       });
     }
 
-    console.log(`Authchain resolution complete.`);
+    const endTime = Date.now();
+    const durationSeconds = ((endTime - startTime) / 1000).toFixed(2);
+    const avgTimePerRegistry = ((endTime - startTime) / validOutputs.length).toFixed(0);
 
-    // Save cache (atomic - only if we got here successfully)
+    console.log(`Authchain resolution complete in ${durationSeconds}s (avg ${avgTimePerRegistry}ms per registry)`);
+
+    // Display detailed cache statistics
     if (useCache) {
+      const totalHits = perfectCacheHits + goodCacheHits + partialCacheHits;
+      const totalRegistries = totalHits + cacheMisses;
+
+      console.log('\nCache Performance:');
+      console.log(`  Perfect hits: ${perfectCacheHits} (0 queries each)`);
+      console.log(`  Good hits: ${goodCacheHits} (1 query each)`);
+      console.log(`  Partial hits: ${partialCacheHits} (continued from cache)`);
+      console.log(`  Misses: ${cacheMisses} (full authchain walk)`);
+      console.log(`  Total: ${totalHits}/${totalRegistries} cached (${((totalHits / totalRegistries) * 100).toFixed(1)}%)`);
+
+      console.log('\nFulcrum Query Statistics:');
+      console.log(`  Total queries: ${totalFulcrumQueries}`);
+      console.log(`  Average per registry: ${(totalFulcrumQueries / validOutputs.length).toFixed(2)}`);
+
+      // Estimate query savings
+      if (totalHits > 0) {
+        // Assume average authchain length of 2 for missed registries
+        const estimatedQueriesWithoutCache = cacheMisses * 2 + totalHits * 2;
+        const queriesSaved = estimatedQueriesWithoutCache - totalFulcrumQueries;
+        const percentSaved = ((queriesSaved / estimatedQueriesWithoutCache) * 100).toFixed(1);
+        console.log(`  Estimated queries saved: ${queriesSaved} (~${percentSaved}% reduction)`);
+      }
+
+      // Save cache (atomic - only if we got here successfully)
       saveAuthchainCache(newCache, cachePath);
-      console.log(
-        `Cache: ${cacheHits} hits, ${cacheMisses} misses (${inactiveCacheHits} inactive/permanent)`
-      );
+      console.log(`\nCache saved to ${cachePath}`);
     }
 
     // Sort by block height (newest first)

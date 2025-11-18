@@ -35,6 +35,7 @@ function parseArgs(): {
   jsonFolder: string;
   useCache: boolean;
   clearCache: boolean;
+  verbose: boolean;
 } {
   const args = process.argv.slice(2);
   let format: 'txt' | 'json' = 'txt';
@@ -43,6 +44,7 @@ function parseArgs(): {
   let jsonFolder = './bcmr-registries';
   let useCache = true;
   let clearCache = false;
+  let verbose = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -76,6 +78,8 @@ function parseArgs(): {
       useCache = false;
     } else if (arg === '--clear-cache') {
       clearCache = true;
+    } else if (arg === '--verbose' || arg === '-v') {
+      verbose = true;
     } else if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
@@ -86,7 +90,7 @@ function parseArgs(): {
     }
   }
 
-  return { format, output, fetchJson, jsonFolder, useCache, clearCache };
+  return { format, output, fetchJson, jsonFolder, useCache, clearCache, verbose };
 }
 
 /**
@@ -105,6 +109,7 @@ Options:
   --json-folder <path>      Folder to save registry JSON files (default: ./bcmr-registries)
   --no-cache                Disable authchain caching (force full resolution)
   --clear-cache             Delete cache before running
+  --verbose, -v             Enable verbose logging for detailed diagnostics
   --help, -h                Show this help message
 
 Examples:
@@ -115,6 +120,7 @@ Examples:
   npm start --output my-links.txt             # Custom output filename
   npm start --no-cache                        # Force full authchain resolution
   npm start --clear-cache                     # Clear cache and rebuild
+  npm start --verbose                         # Show per-registry cache diagnostics
 
 Environment Variables:
   CHAINGRAPH_URL    GraphQL endpoint for Chaingraph (required)
@@ -124,6 +130,8 @@ Performance:
   Authchain caching significantly improves performance on subsequent runs.
   First run: ~6-10 minutes (builds cache)
   Subsequent runs: ~2-4 minutes (uses cache for inactive chains)
+
+  Use --verbose to see detailed cache hit/miss information per registry.
 `);
 }
 
@@ -263,7 +271,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const { format, output, fetchJson, jsonFolder, useCache, clearCache } = parseArgs();
+    const { format, output, fetchJson, jsonFolder, useCache, clearCache, verbose } = parseArgs();
 
     // Handle cache clearing
     if (clearCache) {
@@ -284,8 +292,9 @@ async function main(): Promise<void> {
     const registries = await getBCMRRegistries({
       useCache,
       cachePath: join(jsonFolder, '.authchain-cache.json'),
+      verbose,
     });
-    console.log(`Found ${registries.length} total registries`);
+    console.log(`\nFound ${registries.length} total registries`);
 
     // Show authchain summary
     const activeRegistries = registries.filter((r) => r.isAuthheadUnspent);

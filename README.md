@@ -112,6 +112,7 @@ npm start
 | `--json-folder` | - | Folder to save registry JSON files | `./bcmr-registries` |
 | `--no-cache` | - | Disable authchain caching (force full resolution) | `false` (cache enabled) |
 | `--clear-cache` | - | Delete cache before running | `false` |
+| `--verbose` | `-v` | Enable verbose logging for detailed diagnostics | `false` |
 | `--help` | `-h` | Show help message | - |
 
 ### Examples
@@ -154,6 +155,11 @@ npm start -- --no-cache
 **Clear cache and rebuild**:
 ```bash
 npm start -- --clear-cache
+```
+
+**Verbose mode** (detailed cache diagnostics):
+```bash
+npm start -- --verbose
 ```
 
 ## Output Formats
@@ -238,18 +244,66 @@ npm run dev
   - Performs full authchain resolution for all registries
   - Builds cache for future runs
 - **Subsequent runs (warm cache):** ~2-4 minutes
-  - Inactive chains: 0 queries (cached permanently)
-  - Active chains: 1 query per chain (check if still unspent)
+  - **Perfect hits:** Inactive chains (0 Fulcrum queries)
+  - **Good hits:** Active chains still unspent (1 query to verify)
+  - **Partial hits:** Active chains with spent authhead (continues from cache)
   - **~75% reduction in Fulcrum queries**
 
 **Cache Behavior:**
 - **Interruption-safe:** Cache only saved if run completes successfully
 - **Automatic:** No manual intervention needed
-- **Transparent:** Cache statistics shown in output
+- **Detailed statistics:** Shows cache hit types, query counts, and performance metrics
+- **Cache age tracking:** Displays oldest and newest cache entry timestamps
 
 **Without Caching (`--no-cache`):**
 - Every run takes ~6-10 minutes
 - Useful for testing or when cache corruption suspected
+
+### Verifying Cache Performance
+
+Use the `--verbose` flag to see per-registry cache diagnostics:
+
+```bash
+npm start -- --verbose
+```
+
+**Normal output shows:**
+- Cache hit/miss breakdown (perfect/good/partial/miss)
+- Total Fulcrum queries made
+- Average queries per registry
+- Estimated query savings
+- Performance timing (duration, rate)
+- Cache age information
+
+**Verbose output additionally shows:**
+- Per-registry cache hit type
+- Queries used for each registry
+- Real-time processing rate
+
+**Example output (second run with warm cache):**
+```
+Loaded authchain cache from ./bcmr-registries/.authchain-cache.json
+  3124 entries (1543 active, 1581 inactive)
+  Cache age: oldest 2.3h, newest 0.1h
+Resolving authchains for 3124 registries...
+  Resolving authchains... 100/3124 (2.1s, 47.6 reg/s)
+  ...
+Authchain resolution complete in 65.42s (avg 21ms per registry)
+
+Cache Performance:
+  Perfect hits: 1581 (0 queries each)
+  Good hits: 1512 (1 query each)
+  Partial hits: 28 (continued from cache)
+  Misses: 3 (full authchain walk)
+  Total: 3121/3124 cached (99.9%)
+
+Fulcrum Query Statistics:
+  Total queries: 1587
+  Average per registry: 0.51
+  Estimated queries saved: 4661 (~74.6% reduction)
+
+Cache saved to ./bcmr-registries/.authchain-cache.json
+```
 
 ### JSON Fetching Performance
 
