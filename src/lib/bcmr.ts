@@ -3,8 +3,6 @@
  * Fetches and parses BCMR registry announcements from the BCH blockchain
  */
 
-const CHAINGRAPH_URL = import.meta.env.CHAINGRAPH_URL;
-
 // GraphQL query to fetch all BCMR outputs using prefix search
 const BCMR_QUERY = `
   query SearchOutputsByLockingBytecodePrefix {
@@ -213,6 +211,12 @@ function isOutputBurned(output: BCMROutput): boolean {
  */
 export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
   try {
+    const CHAINGRAPH_URL = process.env.CHAINGRAPH_URL || '';
+
+    if (!CHAINGRAPH_URL) {
+      throw new Error('CHAINGRAPH_URL environment variable is not set');
+    }
+
     const response = await fetch(CHAINGRAPH_URL, {
       method: 'POST',
       headers: {
@@ -221,20 +225,22 @@ export async function getBCMRRegistries(): Promise<BCMRRegistry[]> {
       body: JSON.stringify({
         query: BCMR_QUERY,
       }),
-      cache: 'no-store',
     });
 
     if (!response.ok) {
       throw new Error(`Chaingraph request failed: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as {
+      data?: { search_output_prefix?: BCMROutput[] };
+      errors?: Array<{ message: string }>;
+    };
 
     if (data.errors) {
       throw new Error(`GraphQL errors: ${JSON.stringify(data.errors)}`);
     }
 
-    const outputs: BCMROutput[] = data.data.search_output_prefix || [];
+    const outputs: BCMROutput[] = data.data?.search_output_prefix || [];
 
     // Filter to keep only first BCMR output per transaction
     const validOutputs = filterFirstOutputOnly(outputs);

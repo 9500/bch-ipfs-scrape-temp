@@ -1,16 +1,19 @@
 {
-  "name": "test",
+  "name": "bcmr-ipfs-scraper",
   "type": "module",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "Console app to extract IPFS links from Bitcoin Cash Metadata Registries",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "astro dev --host",
-    "build": "astro build",
-    "preview": "astro preview",
-    "astro": "astro"
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
   },
   "dependencies": {
-    "astro": "^5.15.8",
-    "graphql-ws": "^6.0.6",
-    "ws": "^8.18.3"
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
   }
 }
