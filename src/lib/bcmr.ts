@@ -4,6 +4,7 @@
  */
 
 import { getOutputSpendingTx } from './fulcrum-client.js';
+import { createHash } from 'crypto';
 
 // GraphQL query to fetch all BCMR outputs using prefix search
 const BCMR_QUERY = `
@@ -387,4 +388,98 @@ export function normalizeUri(uri: string): string {
  */
 export function ipfsToGateway(uri: string): string {
   return normalizeUri(uri);
+}
+
+/**
+ * Fetch and validate a BCMR registry JSON from URIs
+ * Tries each URI in order until one succeeds
+ *
+ * @param uris - Array of URIs to try (IPFS and HTTPS)
+ * @param expectedHash - Expected SHA-256 hash of the JSON content
+ * @param maxRetries - Maximum number of retries per URI (default: 3)
+ * @param timeoutMs - Timeout in milliseconds (default: 30000)
+ * @returns Parsed JSON object if valid, null if all attempts fail or hash mismatch
+ */
+export async function fetchAndValidateRegistry(
+  uris: string[],
+  expectedHash: string,
+  maxRetries: number = 3,
+  timeoutMs: number = 30000
+): Promise<any | null> {
+  for (const uri of uris) {
+    // Convert IPFS URIs to gateway URLs
+    const fetchUrl = normalizeUri(uri);
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Create abort controller for timeout
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+        // Fetch the JSON
+        const response = await fetch(fetchUrl, {
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          console.warn(
+            `Failed to fetch ${fetchUrl} (attempt ${attempt}/${maxRetries}): HTTP ${response.status}`
+          );
+          continue;
+        }
+
+        // Get raw text content
+        const rawContent = await response.text();
+
+        // Compute SHA-256 hash
+        const computedHash = createHash('sha256').update(rawContent).digest('hex');
+
+        // Verify hash matches
+        if (computedHash !== expectedHash) {
+          console.warn(
+            `Hash mismatch for ${fetchUrl}: expected ${expectedHash}, got ${computedHash}`
+          );
+          return null; // Hash mismatch - don't retry, this is invalid
+        }
+
+        // Parse JSON
+        try {
+          const json = JSON.parse(rawContent);
+
+          // Basic structure validation - must have identities object
+          if (!json || typeof json !== 'object' || !json.identities) {
+            console.warn(`Invalid BCMR structure from ${fetchUrl}: missing identities object`);
+            return null;
+          }
+
+          // Success!
+          return json;
+        } catch (parseError) {
+          console.warn(`JSON parse error from ${fetchUrl}:`, parseError);
+          return null; // Invalid JSON - don't retry
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.warn(
+            `Timeout fetching ${fetchUrl} (attempt ${attempt}/${maxRetries})`
+          );
+        } else {
+          console.warn(
+            `Error fetching ${fetchUrl} (attempt ${attempt}/${maxRetries}):`,
+            error instanceof Error ? error.message : error
+          );
+        }
+
+        // Wait before retry with exponential backoff
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
+        }
+      }
+    }
+  }
+
+  // All URIs and retries failed
+  return null;
 }

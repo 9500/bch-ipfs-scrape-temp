@@ -4,9 +4,10 @@
  * Console application to fetch and save IPFS links from Bitcoin Cash Metadata Registries
  */
 
-import { writeFileSync } from 'fs';
-import { getBCMRRegistries } from './lib/bcmr.js';
+import { writeFileSync, mkdirSync } from 'fs';
+import { getBCMRRegistries, fetchAndValidateRegistry } from './lib/bcmr.js';
 import * as dotenv from 'dotenv';
+import { join } from 'path';
 
 // Load environment variables
 dotenv.config();
@@ -16,15 +17,27 @@ interface IPFSLinkOutput {
   blockHeight: number;
   hash: string;
   ipfsUri: string;
+  authchainLength?: number;
+  isActive?: boolean;
+  registryValid?: boolean;
+  registryFetched?: boolean;
+  jsonPath?: string;
 }
 
 /**
  * Parse command line arguments
  */
-function parseArgs(): { format: 'txt' | 'json'; output: string } {
+function parseArgs(): {
+  format: 'txt' | 'json';
+  output: string;
+  fetchJson: boolean;
+  jsonFolder: string;
+} {
   const args = process.argv.slice(2);
   let format: 'txt' | 'json' = 'txt';
   let output = 'bcmr-ipfs-links.txt';
+  let fetchJson = false;
+  let jsonFolder = './bcmr-registries';
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -45,6 +58,15 @@ function parseArgs(): { format: 'txt' | 'json'; output: string } {
         process.exit(1);
       }
       i++;
+    } else if (arg === '--fetch-json') {
+      fetchJson = true;
+    } else if (arg === '--json-folder') {
+      jsonFolder = args[i + 1];
+      if (!jsonFolder) {
+        console.error('Error: --json-folder requires a path');
+        process.exit(1);
+      }
+      i++;
     } else if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
@@ -55,7 +77,7 @@ function parseArgs(): { format: 'txt' | 'json'; output: string } {
     }
   }
 
-  return { format, output };
+  return { format, output, fetchJson, jsonFolder };
 }
 
 /**
@@ -70,42 +92,108 @@ Usage: npm start [options]
 Options:
   --format, -f <txt|json>   Output format (default: txt)
   --output, -o <filename>   Output filename (default: bcmr-ipfs-links.txt)
+  --fetch-json              Fetch and validate registry JSON from URIs
+  --json-folder <path>      Folder to save registry JSON files (default: ./bcmr-registries)
   --help, -h                Show this help message
 
 Examples:
-  npm start                                  # Save to bcmr-ipfs-links.txt
-  npm start --format json                    # Save as JSON
-  npm start --output my-links.txt            # Custom filename
-  npm start -f json -o output.json           # JSON with custom filename
+  npm start                                   # Save IPFS links only
+  npm start --format json                     # Save as JSON with metadata
+  npm start --fetch-json                      # Fetch and validate registry JSON
+  npm start --fetch-json --json-folder ./data # Custom JSON storage folder
+  npm start --output my-links.txt             # Custom output filename
 
 Environment Variables:
   CHAINGRAPH_URL    GraphQL endpoint for Chaingraph (required)
+  FULCRUM_WS_URL    Fulcrum WebSocket endpoint for authchain resolution (required)
 `);
 }
 
 /**
  * Extract IPFS URIs from registries
  */
-function extractIPFSLinks(registries: Awaited<ReturnType<typeof getBCMRRegistries>>): IPFSLinkOutput[] {
+async function extractIPFSLinks(
+  registries: Awaited<ReturnType<typeof getBCMRRegistries>>,
+  fetchJson: boolean,
+  jsonFolder: string
+): Promise<IPFSLinkOutput[]> {
   const results: IPFSLinkOutput[] = [];
 
-  for (const registry of registries) {
-    // Filter out burned and invalid registries
-    if (registry.isBurned || !registry.isValid) {
+  // Create JSON folder if needed
+  if (fetchJson) {
+    try {
+      mkdirSync(jsonFolder, { recursive: true });
+    } catch (error) {
+      console.error(`Failed to create folder ${jsonFolder}:`, error);
+      throw error;
+    }
+  }
+
+  let fetchedCount = 0;
+  let validCount = 0;
+  let failedCount = 0;
+
+  for (let i = 0; i < registries.length; i++) {
+    const registry = registries[i];
+
+    // Show progress for JSON fetching
+    if (fetchJson && (i + 1) % 50 === 0) {
+      console.log(`  Fetching and validating... ${i + 1}/${registries.length}`);
+    }
+
+    // Filter out burned, invalid, or inactive registries
+    if (registry.isBurned || !registry.isValid || !registry.isAuthheadUnspent) {
       continue;
     }
 
     // Extract only IPFS URIs (exclude HTTPS and other protocols)
     for (const uri of registry.uris) {
       if (uri.startsWith('ipfs://')) {
-        results.push({
+        const linkOutput: IPFSLinkOutput = {
           tokenId: registry.tokenId,
           blockHeight: registry.blockHeight,
           hash: registry.hash,
           ipfsUri: uri,
-        });
+          authchainLength: registry.authchainLength,
+          isActive: registry.isAuthheadUnspent,
+        };
+
+        // Optionally fetch and validate registry JSON
+        if (fetchJson) {
+          try {
+            const registryJson = await fetchAndValidateRegistry(registry.uris, registry.hash);
+
+            if (registryJson) {
+              // Save the JSON file
+              const jsonPath = join(jsonFolder, `${registry.tokenId}.json`);
+              writeFileSync(jsonPath, JSON.stringify(registryJson, null, 2), 'utf-8');
+
+              linkOutput.registryValid = true;
+              linkOutput.registryFetched = true;
+              linkOutput.jsonPath = jsonPath;
+              fetchedCount++;
+              validCount++;
+            } else {
+              linkOutput.registryValid = false;
+              linkOutput.registryFetched = false;
+              failedCount++;
+            }
+          } catch (error) {
+            linkOutput.registryValid = false;
+            linkOutput.registryFetched = false;
+            failedCount++;
+          }
+        }
+
+        results.push(linkOutput);
       }
     }
+  }
+
+  if (fetchJson) {
+    console.log(
+      `\nRegistry JSON summary: Fetched: ${fetchedCount}, Valid: ${validCount}, Failed: ${failedCount}`
+    );
   }
 
   return results;
@@ -123,22 +211,36 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const { format, output } = parseArgs();
+    if (!process.env.FULCRUM_WS_URL) {
+      console.error('Error: FULCRUM_WS_URL environment variable is not set');
+      console.error('Please add FULCRUM_WS_URL=<your-fulcrum-ws-url> to .env file');
+      process.exit(1);
+    }
+
+    const { format, output, fetchJson, jsonFolder } = parseArgs();
 
     console.log('Fetching BCMR registries from Chaingraph...');
     const registries = await getBCMRRegistries();
     console.log(`Found ${registries.length} total registries`);
 
-    console.log('Extracting IPFS links...');
-    const ipfsLinks = extractIPFSLinks(registries);
-    console.log(`Extracted ${ipfsLinks.length} IPFS links`);
+    // Show authchain summary
+    const activeRegistries = registries.filter((r) => r.isAuthheadUnspent);
+    console.log(`Active registries (authhead unspent): ${activeRegistries.length}`);
+
+    console.log('\nExtracting IPFS links...');
+    if (fetchJson) {
+      console.log(`Fetching and validating registry JSON (this may take a while)...`);
+    }
+
+    const ipfsLinks = await extractIPFSLinks(registries, fetchJson, jsonFolder);
+    console.log(`Extracted ${ipfsLinks.length} IPFS links from active registries`);
 
     if (ipfsLinks.length === 0) {
       console.log('No IPFS links found. Nothing to save.');
       return;
     }
 
-    console.log(`Saving to ${output} (format: ${format})...`);
+    console.log(`\nSaving to ${output} (format: ${format})...`);
 
     if (format === 'json') {
       // Save as JSON
@@ -146,11 +248,15 @@ async function main(): Promise<void> {
       writeFileSync(output, jsonOutput, 'utf-8');
     } else {
       // Save as plain text (one link per line)
-      const txtOutput = ipfsLinks.map(link => link.ipfsUri).join('\n');
+      const txtOutput = ipfsLinks.map((link) => link.ipfsUri).join('\n');
       writeFileSync(output, txtOutput, 'utf-8');
     }
 
     console.log(`✓ Successfully saved ${ipfsLinks.length} IPFS links to ${output}`);
+
+    if (fetchJson) {
+      console.log(`✓ Registry JSON files saved to ${jsonFolder}/`);
+    }
   } catch (error) {
     console.error('Error:', error instanceof Error ? error.message : error);
     process.exit(1);
