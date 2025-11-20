@@ -28,5 +28,6 @@ bcmr-registries/
 .authchain-cache.json
 authhead.json
 exported-urls.txt
+bcmr-ipfs-cids.txt
 bcmr-ipfs-links.txt
 *.json.txt

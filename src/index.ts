@@ -36,9 +36,11 @@ interface AuthheadRegistry {
 function parseArgs(): {
   authchainResolve: boolean;
   export: string | null;
+  exportBcmrIpfsCids: boolean;
   fetchJson: boolean;
   authheadFile: string;
   exportFile: string;
+  cidsFile: string;
   jsonFolder: string;
   useCache: boolean;
   clearCache: boolean;
@@ -49,9 +51,11 @@ function parseArgs(): {
   const args = process.argv.slice(2);
   let authchainResolve = false;
   let exportProtocols: string | null = null;
+  let exportBcmrIpfsCids = false;
   let fetchJson = false;
   let authheadFile = './authhead.json';
   let exportFile = 'exported-urls.txt';
+  let cidsFile = 'bcmr-ipfs-cids.txt';
   let jsonFolder = './bcmr-registries';
   let useCache = true;
   let clearCache = false;
@@ -73,6 +77,8 @@ function parseArgs(): {
       i++;
     } else if (arg === '--fetch-json') {
       fetchJson = true;
+    } else if (arg === '--export-bcmr-ipfs-cids') {
+      exportBcmrIpfsCids = true;
     } else if (arg === '--authhead-file') {
       authheadFile = args[i + 1];
       if (!authheadFile) {
@@ -84,6 +90,13 @@ function parseArgs(): {
       exportFile = args[i + 1];
       if (!exportFile) {
         console.error('Error: --export-file requires a filename');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--cids-file') {
+      cidsFile = args[i + 1];
+      if (!cidsFile) {
+        console.error('Error: --cids-file requires a filename');
         process.exit(1);
       }
       i++;
@@ -120,9 +133,11 @@ function parseArgs(): {
   return {
     authchainResolve,
     export: exportProtocols,
+    exportBcmrIpfsCids,
     fetchJson,
     authheadFile,
     exportFile,
+    cidsFile,
     jsonFolder,
     useCache,
     clearCache,
@@ -144,11 +159,13 @@ Usage: npm start [command] [options]
 Commands:
   --authchain-resolve       Resolve authchains and save to authhead.json
   --export <protocols>      Export URLs from authhead.json (IPFS, HTTPS, OTHER, ALL)
+  --export-bcmr-ipfs-cids   Export only IPFS CIDs from authhead.json (deduplicated, sorted)
   --fetch-json              Fetch BCMR JSON files from authhead.json
 
 Options:
   --authhead-file <path>    Path to authhead.json (default: ./authhead.json)
   --export-file <filename>  Export output filename (default: exported-urls.txt)
+  --cids-file <filename>    CIDs output filename (default: bcmr-ipfs-cids.txt)
   --json-folder <path>      Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --no-cache                Disable authchain caching (force full resolution)
   --clear-cache             Delete cache before running
@@ -167,13 +184,16 @@ Workflow Examples:
   3. Export multiple protocol types:
      npm start -- --export IPFS,HTTPS --export-file all-urls.txt
 
-  4. Fetch BCMR JSON files:
+  4. Export only IPFS CIDs (deduplicated and sorted):
+     npm start -- --export-bcmr-ipfs-cids
+
+  5. Fetch BCMR JSON files:
      npm start -- --fetch-json
 
-  5. Combined workflow (all in one):
-     npm start -- --authchain-resolve --export IPFS --fetch-json
+  6. Combined workflow (all in one):
+     npm start -- --authchain-resolve --export IPFS --export-bcmr-ipfs-cids --fetch-json
 
-  6. Custom authhead.json location:
+  7. Custom authhead.json location:
      npm start -- --authchain-resolve --authhead-file ./data/authhead.json
      npm start -- --export IPFS --authhead-file ./data/authhead.json
 
@@ -266,6 +286,73 @@ function parseProtocolsFilter(protocolsStr: string): Set<'IPFS' | 'HTTPS' | 'OTH
   }
 
   return validProtocols;
+}
+
+/**
+ * Validate if a string is a valid IPFS CID (v0 or v1)
+ * CIDv0: Qm[base58]{44} (exactly 46 chars)
+ * CIDv1: [multibase-prefix][encoded-content] (e.g., b=base32, z=base58)
+ */
+function isValidIPFSCID(cid: string): boolean {
+  // Remove any whitespace
+  cid = cid.trim();
+
+  // Check for empty string
+  if (!cid || cid.length === 0) {
+    return false;
+  }
+
+  // CIDv0: Qm[base58]{44}
+  if (cid.startsWith('Qm')) {
+    return (
+      cid.length === 46 &&
+      /^Qm[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{44}$/.test(cid)
+    );
+  }
+
+  // CIDv1: [multibase-prefix][encoded-content]
+  const cidv1Pattern = /^[bzBZmM][a-zA-Z0-9]+$/;
+  if (cidv1Pattern.test(cid)) {
+    const prefix = cid[0];
+    const content = cid.slice(1);
+
+    // Base32 variants (b, B)
+    if (prefix === 'b' || prefix === 'B') {
+      return /^[a-z0-9]+$/.test(content) || /^[A-Z0-9]+$/.test(content);
+    }
+
+    // Base58 variants (z, Z)
+    if (prefix === 'z' || prefix === 'Z') {
+      return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/.test(content);
+    }
+
+    // Base64/Base64url (m, M)
+    if (prefix === 'm' || prefix === 'M') {
+      return /^[A-Za-z0-9+/=\-_]+$/.test(content);
+    }
+
+    return true; // Valid multibase prefix with valid characters
+  }
+
+  return false;
+}
+
+/**
+ * Extract CID from ipfs:// URL (removes path components)
+ * Example: ipfs://Qm.../path/file.json -> Qm...
+ */
+function extractCIDFromURL(url: string): string | null {
+  try {
+    // Handle ipfs:// scheme
+    if (url.startsWith('ipfs://')) {
+      const cidPart = url.substring(7).split('/')[0];
+      return cidPart.length > 0 ? cidPart : null;
+    }
+  } catch {
+    // URL parsing failed
+  }
+
+  return null;
 }
 
 /**
@@ -368,6 +455,70 @@ async function doExport(options: {
 }
 
 /**
+ * Command: Export IPFS CIDs only from authhead.json
+ */
+async function doExportIPFSCIDs(options: {
+  authheadFile: string;
+  cidsFile: string;
+}): Promise<void> {
+  const { authheadFile, cidsFile } = options;
+
+  // Load authhead.json
+  console.log(`Reading ${authheadFile}...`);
+  const registries = loadAuthheadFile(authheadFile);
+
+  // Extract IPFS CIDs
+  const cids: string[] = [];
+  let invalidCount = 0;
+
+  for (const registry of registries) {
+    for (const uri of registry.uris) {
+      // Only process IPFS URLs
+      if (classifyUrlProtocol(uri) === 'IPFS') {
+        // Extract CID from URL (removes path components)
+        const cid = extractCIDFromURL(uri);
+
+        if (cid) {
+          // Validate CID
+          if (isValidIPFSCID(cid)) {
+            cids.push(cid);
+          } else {
+            console.warn(`Warning: Invalid CID format in URL: ${uri}`);
+            invalidCount++;
+          }
+        } else {
+          console.warn(`Warning: Failed to extract CID from URL: ${uri}`);
+          invalidCount++;
+        }
+      }
+    }
+  }
+
+  if (cids.length === 0) {
+    console.log('No valid IPFS CIDs found.');
+    return;
+  }
+
+  // Deduplicate CIDs
+  const uniqueCids = Array.from(new Set(cids));
+
+  // Sort alphabetically (case-sensitive)
+  uniqueCids.sort();
+
+  // Save to file (one CID per line)
+  const txtOutput = uniqueCids.join('\n');
+  writeFileSync(cidsFile, txtOutput, 'utf-8');
+
+  console.log(`\n✓ Exported ${uniqueCids.length} unique IPFS CIDs to ${cidsFile}`);
+  console.log(`  Total CIDs found: ${cids.length}`);
+  console.log(`  Unique CIDs: ${uniqueCids.length}`);
+  console.log(`  Duplicates removed: ${cids.length - uniqueCids.length}`);
+  if (invalidCount > 0) {
+    console.log(`  Invalid CIDs skipped: ${invalidCount}`);
+  }
+}
+
+/**
  * Command: Fetch BCMR JSON files from authhead.json
  */
 async function doFetchJson(options: {
@@ -464,7 +615,7 @@ async function main(): Promise<void> {
     const args = parseArgs();
 
     // Show help if requested or no commands specified
-    if (args.showHelp || (!args.authchainResolve && !args.export && !args.fetchJson)) {
+    if (args.showHelp || (!args.authchainResolve && !args.export && !args.exportBcmrIpfsCids && !args.fetchJson)) {
       printUsage();
       process.exit(0);
     }
@@ -516,6 +667,13 @@ async function main(): Promise<void> {
         authheadFile: args.authheadFile,
         exportFile: args.exportFile,
         protocols: args.export,
+      });
+    }
+
+    if (args.exportBcmrIpfsCids) {
+      await doExportIPFSCIDs({
+        authheadFile: args.authheadFile,
+        cidsFile: args.cidsFile,
       });
     }
 

@@ -52,6 +52,7 @@ BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain
 │   └── *.json                    # Registry JSON files (with --fetch-json)
 ├── authhead.json                 # Resolved active registries (with --authchain-resolve)
 ├── exported-urls.txt             # Exported URLs (with --export)
+├── bcmr-ipfs-cids.txt            # Exported IPFS CIDs (with --export-bcmr-ipfs-cids)
 ├── .env                          # Environment configuration
 ├── package.json                  # Project dependencies and scripts
 └── tsconfig.json                 # TypeScript configuration
@@ -161,7 +162,47 @@ npm start -- --export IPFS --authhead-file ./data/authhead.json
 
 **Output:** Text file with one URL per line
 
-### 3. Fetch Registry JSON Files
+### 3. Export IPFS CIDs Only
+
+Extract and export only IPFS CIDs from `authhead.json` (deduplicated and sorted):
+
+```bash
+npm start -- --export-bcmr-ipfs-cids
+```
+
+**Features:**
+- Extracts CIDs from `ipfs://` URLs (removes path components)
+- Validates CID format (CIDv0 and CIDv1)
+- Deduplicates CIDs automatically
+- Sorts alphabetically
+- Logs warnings for invalid CIDs
+
+**Options:**
+- `--authhead-file <path>` - Path to authhead.json (default: `./authhead.json`)
+- `--cids-file <filename>` - Output filename (default: `bcmr-ipfs-cids.txt`)
+
+**Examples:**
+```bash
+# Export IPFS CIDs with default filename
+npm start -- --export-bcmr-ipfs-cids
+
+# Export to custom file
+npm start -- --export-bcmr-ipfs-cids --cids-file my-cids.txt
+
+# Custom authhead.json location
+npm start -- --export-bcmr-ipfs-cids --authhead-file ./data/authhead.json
+```
+
+**Output:** Text file with one CID per line (deduplicated, sorted)
+
+**Example output:**
+```
+QmVwdDCY4SPGVFnNCiZnX5CtzwWDn6kAM98JXzKxE3kCmn
+bafyreihwqw6lsve7gkorqemerjrl3t5fjxpjdljbndto467zixmstw43aq
+zb2rhY3zDDA4RYEHbkwLjVB8v84u7x4Ztda8oVpyVGnQV
+```
+
+### 4. Fetch Registry JSON Files
 
 Fetch and validate BCMR JSON files from `authhead.json`:
 
@@ -185,11 +226,20 @@ npm start -- --fetch-json --json-folder ./my-registries
 Commands can be combined in a single execution:
 
 ```bash
-# Resolve, export, and fetch in one command
+# Resolve, export URLs, and fetch in one command
 npm start -- --authchain-resolve --export IPFS --fetch-json
 
+# Resolve, export CIDs, and fetch
+npm start -- --authchain-resolve --export-bcmr-ipfs-cids --fetch-json
+
+# Export both URLs and CIDs
+npm start -- --export IPFS --export-bcmr-ipfs-cids
+
+# Complete workflow: resolve, export URLs, export CIDs, fetch JSONs
+npm start -- --authchain-resolve --export IPFS --export-bcmr-ipfs-cids --fetch-json
+
 # With custom options
-npm start -- --authchain-resolve --verbose --export IPFS,HTTPS --export-file urls.txt --fetch-json
+npm start -- --authchain-resolve --verbose --export IPFS,HTTPS --export-file urls.txt --export-bcmr-ipfs-cids --cids-file cids.txt --fetch-json
 ```
 
 ## Command Reference
@@ -198,9 +248,11 @@ npm start -- --authchain-resolve --verbose --export IPFS,HTTPS --export-file url
 |------|-------------|---------|---------|
 | `--authchain-resolve` | Resolve authchains and save to authhead.json | - | Command |
 | `--export <protocols>` | Export URLs from authhead.json | - | Command |
+| `--export-bcmr-ipfs-cids` | Export IPFS CIDs only (deduplicated, sorted) | - | Command |
 | `--fetch-json` | Fetch BCMR JSON files | - | Command |
 | `--authhead-file <path>` | Path to authhead.json | `./authhead.json` | All commands |
 | `--export-file <filename>` | Export output filename | `exported-urls.txt` | `--export` |
+| `--cids-file <filename>` | CIDs output filename | `bcmr-ipfs-cids.txt` | `--export-bcmr-ipfs-cids` |
 | `--json-folder <path>` | Folder for cache and BCMR JSON | `./bcmr-registries` | `--authchain-resolve`, `--fetch-json` |
 | `--no-cache` | Disable authchain caching | false (cache enabled) | `--authchain-resolve` |
 | `--clear-cache` | Delete cache before running | false | `--authchain-resolve` |
@@ -243,6 +295,23 @@ ipfs://QmHash1...
 ipfs://QmHash2...
 https://example.com/registry.json
 ```
+
+### bcmr-ipfs-cids.txt
+
+Plain text with one CID per line (deduplicated and sorted alphabetically):
+
+```
+QmVwdDCY4SPGVFnNCiZnX5CtzwWDn6kAM98JXzKxE3kCmn
+bafyreihwqw6lsve7gkorqemerjrl3t5fjxpjdljbndto467zixmstw43aq
+zb2rhY3zDDA4RYEHbkwLjVB8v84u7x4Ztda8oVpyVGnQV
+```
+
+**Features:**
+- Only IPFS CIDs (extracted from `ipfs://` URLs)
+- Paths removed (e.g., `ipfs://Qm.../path/file` → `Qm...`)
+- Automatically deduplicated
+- Sorted alphabetically (case-sensitive)
+- Invalid CIDs skipped with warning
 
 ### BCMR JSON Files
 
