@@ -1,27 +1,27 @@
-# BCMR IPFS Link Extractor & Validator
+# BCMR Registry Tool
 
-A Node.js console application that extracts and validates IPFS links from Bitcoin Cash Metadata Registry (BCMR) announcements on the blockchain, with full authchain resolution according to the BCMR specification.
+A Node.js console application for resolving, exporting, and fetching Bitcoin Cash Metadata Registry (BCMR) data from the blockchain with full authchain resolution.
 
 ## What is BCMR?
 
-BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain metadata about Bitcoin Cash tokens and identities. This tool queries the blockchain via Chaingraph to find all BCMR announcements, resolves authchains to find the current registry state, and optionally fetches and validates the registry JSON files.
+BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain metadata about Bitcoin Cash tokens and identities. This tool queries the blockchain via Chaingraph to find all BCMR announcements, resolves authchains to find the current registry state, and provides commands to export URLs and fetch registry JSON files.
 
 ## Features
 
 ### Core Functionality
-- **Fetches BCMR registry data** from Chaingraph GraphQL API
-- **Parses Bitcoin Script OP_RETURN** outputs to extract metadata
-- **Full authchain resolution** via Fulcrum Electrum protocol
+- **Resolves authchains** via Chaingraph GraphQL and Fulcrum Electrum protocol
   - Follows spending chain from authbase to authhead
   - Identifies active vs superseded registries
   - Tracks chain length and validation status
   - **Intelligent caching** reduces subsequent runs from minutes to seconds
-- **Filters registries**:
-  - Burned registries (OP_RETURN at output index 0)
-  - Invalid registries (no URIs)
-  - Inactive registries (authhead output spent)
-- **Extracts IPFS URIs** (excludes HTTPS URLs)
-- **Supports multiple output formats** (plain text or JSON with metadata)
+- **Exports URLs** from resolved registries with protocol filtering
+  - IPFS, HTTPS (includes HTTP), OTHER protocols
+  - Supports multiple protocol combinations
+- **Fetches and validates registry JSON** from IPFS and HTTPS
+  - SHA-256 hash validation against on-chain data
+  - Structure validation (must have `identities` object)
+  - Retry logic with exponential backoff
+  - Local caching to avoid redundant network fetches
 
 ### Authchain Caching
 - **Automatic caching** of authchain resolution results
@@ -30,15 +30,6 @@ BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain
 - **Atomic cache updates** prevent corruption from interruptions
 - **Cache stored** in `bcmr-registries/.authchain-cache.json`
 - **Performance improvement:** 75% reduction in queries on subsequent runs
-
-### Optional JSON Validation (--fetch-json)
-- **Fetches registry JSON** from IPFS gateways and HTTPS URIs
-- **SHA-256 hash validation** against on-chain data
-- **Structure validation** (must have `identities` object)
-- **Saves valid JSON files** to specified folder
-- **Retry logic** with exponential backoff (2 attempts per URI)
-- **2-second timeout** per request
-- **Progress reporting** with fetch statistics
 
 ### Performance Optimizations
 - **WebSocket connection pooling** maintains 10 persistent connections to Fulcrum
@@ -59,6 +50,8 @@ BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain
 ├── bcmr-registries/
 │   ├── .authchain-cache.json     # Authchain resolution cache (auto-generated)
 │   └── *.json                    # Registry JSON files (with --fetch-json)
+├── authhead.json                 # Resolved active registries (with --authchain-resolve)
+├── exported-urls.txt             # Exported URLs (with --export)
 ├── .env                          # Environment configuration
 ├── package.json                  # Project dependencies and scripts
 └── tsconfig.json                 # TypeScript configuration
@@ -90,7 +83,7 @@ CHAINGRAPH_URL=http://your-chaingraph-server:8088/v1/graphql
 FULCRUM_WS_URL=ws://your-fulcrum-server:50003
 ```
 
-**Note**: Both CHAINGRAPH_URL and FULCRUM_WS_URL are required.
+**Note**: Both CHAINGRAPH_URL and FULCRUM_WS_URL are required for authchain resolution.
 
 ## Usage
 
@@ -102,150 +95,166 @@ npm run build
 
 ### Run the application
 
-Basic usage (IPFS links only, saves to `bcmr-ipfs-links.txt`):
+Show help:
 
 ```bash
 npm start
 ```
 
-### Command-line Options
+## Commands
 
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--format` | `-f` | Output format: `txt` or `json` | `txt` |
-| `--output` | `-o` | Output filename | `bcmr-ipfs-links.txt` |
-| `--fetch-json` | - | Fetch and validate registry JSON files | `false` (disabled) |
-| `--json-folder` | - | Folder to save registry JSON files | `./bcmr-registries` |
-| `--no-cache` | - | Disable authchain caching (force full resolution) | `false` (cache enabled) |
-| `--clear-cache` | - | Delete cache before running | `false` |
-| `--concurrency` | `-c` | Parallel query concurrency (1-200) | `50` |
-| `--verbose` | `-v` | Enable verbose logging for detailed diagnostics | `false` |
-| `--help` | `-h` | Show help message | - |
+### 1. Resolve Authchains
 
-### Examples
+Fetch BCMR data from Chaingraph, resolve authchains, and save active registries to `authhead.json`:
 
-**Basic usage** (IPFS links only, no JSON fetching):
 ```bash
-npm start
+npm start -- --authchain-resolve
 ```
 
-**Save as JSON** with authchain metadata:
+**Options:**
+- `--authhead-file <path>` - Custom output file (default: `./authhead.json`)
+- `--json-folder <path>` - Folder for cache (default: `./bcmr-registries`)
+- `--no-cache` - Disable authchain caching (force full resolution)
+- `--clear-cache` - Delete cache before running
+- `--concurrency <num>` - Parallel query concurrency (1-200, default: 50)
+- `--verbose` - Enable verbose logging
+
+**Example:**
 ```bash
-npm start -- --format json
+npm start -- --authchain-resolve --verbose --concurrency 100
 ```
 
-**Fetch and validate registry JSON** (saves to `./bcmr-registries/`):
+**Output:** `authhead.json` containing all active registries (non-burned, valid URIs, authhead unspent)
+
+### 2. Export URLs
+
+Export URLs from `authhead.json` with protocol filtering:
+
+```bash
+npm start -- --export <protocols>
+```
+
+**Protocol Filters:**
+- `IPFS` - IPFS URIs (`ipfs://`)
+- `HTTPS` - HTTP and HTTPS URIs (`http://`, `https://`)
+- `OTHER` - Other protocols (`dweb://`, etc.)
+- `ALL` - All URIs regardless of protocol
+
+**Options:**
+- `--authhead-file <path>` - Path to authhead.json (default: `./authhead.json`)
+- `--export-file <filename>` - Output filename (default: `exported-urls.txt`)
+
+**Examples:**
+```bash
+# Export IPFS URLs only
+npm start -- --export IPFS
+
+# Export IPFS and HTTPS URLs
+npm start -- --export IPFS,HTTPS --export-file all-urls.txt
+
+# Export all URLs
+npm start -- --export ALL
+
+# Custom authhead.json location
+npm start -- --export IPFS --authhead-file ./data/authhead.json
+```
+
+**Output:** Text file with one URL per line
+
+### 3. Fetch Registry JSON Files
+
+Fetch and validate BCMR JSON files from `authhead.json`:
+
 ```bash
 npm start -- --fetch-json
 ```
 
-**Custom JSON storage folder**:
+**Options:**
+- `--authhead-file <path>` - Path to authhead.json (default: `./authhead.json`)
+- `--json-folder <path>` - Folder to save JSON files (default: `./bcmr-registries`)
+
+**Example:**
 ```bash
 npm start -- --fetch-json --json-folder ./my-registries
 ```
 
-**Full featured** (JSON format with registry validation):
+**Output:** Registry JSON files in specified folder, validated against on-chain hash
+
+### Combined Workflow
+
+Commands can be combined in a single execution:
+
 ```bash
-npm start -- --format json --fetch-json --output validated-registries.json
+# Resolve, export, and fetch in one command
+npm start -- --authchain-resolve --export IPFS --fetch-json
+
+# With custom options
+npm start -- --authchain-resolve --verbose --export IPFS,HTTPS --export-file urls.txt --fetch-json
 ```
 
-**Custom output filename**:
-```bash
-npm start -- --output my-links.txt
-```
+## Command Reference
 
-**Force full authchain resolution** (disable cache):
-```bash
-npm start -- --no-cache
-```
-
-**Clear cache and rebuild**:
-```bash
-npm start -- --clear-cache
-```
-
-**Verbose mode** (detailed cache diagnostics):
-```bash
-npm start -- --verbose
-```
-
-**Custom concurrency** (adjust parallel query limit):
-```bash
-npm start -- --concurrency 100
-```
+| Flag | Description | Default | Used By |
+|------|-------------|---------|---------|
+| `--authchain-resolve` | Resolve authchains and save to authhead.json | - | Command |
+| `--export <protocols>` | Export URLs from authhead.json | - | Command |
+| `--fetch-json` | Fetch BCMR JSON files | - | Command |
+| `--authhead-file <path>` | Path to authhead.json | `./authhead.json` | All commands |
+| `--export-file <filename>` | Export output filename | `exported-urls.txt` | `--export` |
+| `--json-folder <path>` | Folder for cache and BCMR JSON | `./bcmr-registries` | `--authchain-resolve`, `--fetch-json` |
+| `--no-cache` | Disable authchain caching | false (cache enabled) | `--authchain-resolve` |
+| `--clear-cache` | Delete cache before running | false | `--authchain-resolve` |
+| `--concurrency, -c <num>` | Parallel query concurrency (1-200) | 50 | `--authchain-resolve` |
+| `--verbose, -v` | Enable verbose logging | false | `--authchain-resolve` |
+| `--help, -h` | Show help message | - | All |
 
 ## Output Formats
 
-### Plain Text (`txt`)
-One IPFS link per line:
-```
-ipfs://QmHash1...
-ipfs://QmHash2...
-ipfs://QmHash3...
-```
+### authhead.json
 
-### JSON Format (`json`)
-Array of objects with metadata (includes authchain and optional validation info):
+Array of active registry objects (non-burned, valid, authhead unspent):
+
 ```json
 [
   {
-    "tokenId": "transaction_hash_1",
+    "tokenId": "abc123...",
+    "authbase": "abc123...",
+    "authhead": "def456...",
     "blockHeight": 850000,
-    "hash": "sha256_hash",
-    "ipfsUri": "ipfs://QmHash1...",
-    "authchainLength": 1,
+    "hash": "sha256hash...",
+    "uris": [
+      "ipfs://Qm...",
+      "https://example.com/bcmr.json"
+    ],
+    "authchainLength": 2,
     "isActive": true,
-    "registryValid": true,
-    "registryFetched": true,
-    "jsonPath": "./bcmr-registries/transaction_hash_1.json"
-  },
-  {
-    "tokenId": "transaction_hash_2",
-    "blockHeight": 850001,
-    "hash": "sha256_hash",
-    "ipfsUri": "ipfs://QmHash2...",
-    "authchainLength": 3,
-    "isActive": true
+    "isBurned": false,
+    "isValid": true
   }
 ]
 ```
 
-**Fields**:
-- `tokenId`: Transaction hash (authbase)
-- `blockHeight`: Block height of the authbase transaction
-- `hash`: SHA-256 hash from the BCMR OP_RETURN
-- `ipfsUri`: IPFS link in `ipfs://` format
-- `authchainLength`: Number of transactions in the authchain
-- `isActive`: Whether the registry is active (authhead unspent)
-- `registryValid`: (if `--fetch-json`) Hash validation result
-- `registryFetched`: (if `--fetch-json`) Whether JSON was downloaded
-- `jsonPath`: (if `--fetch-json`) Path to saved JSON file
+### exported-urls.txt
+
+Plain text with one URL per line:
+
+```
+ipfs://QmHash1...
+ipfs://QmHash2...
+https://example.com/registry.json
+```
+
+### BCMR JSON Files
+
+Registry JSON files saved in `--json-folder`, named by token ID:
+- `{tokenId}.json` - Validated registry JSON with hash verification
 
 ## Filtering Rules
 
-The application applies the following filters:
-
-- ✅ Includes: Valid registries with at least one URI
-- ✅ Includes: Only IPFS URIs (`ipfs://` protocol)
-- ✅ Includes: Active registries (authhead output 0 unspent)
-- ❌ Excludes: Burned registries (OP_RETURN at output index 0)
-- ❌ Excludes: Invalid registries (no URIs)
-- ❌ Excludes: Inactive registries (authhead output spent/superseded)
-- ❌ Excludes: HTTPS and other non-IPFS URLs
-
-## Development
-
-Build and run in development mode:
-```bash
-npm run dev
-```
-
-## Requirements
-
-- **Node.js 18+** (for native `fetch` and `AbortController` support)
-- **TypeScript 5+**
-- **Access to a Chaingraph server** (GraphQL endpoint)
-- **Access to a Fulcrum server** (Electrum WebSocket endpoint)
+`authhead.json` contains **only active registries** that pass:
+- ✅ Not burned (`isBurned === false`)
+- ✅ Valid (`isValid === true`, has URIs)
+- ✅ Active (`isActive === true`, authhead unspent)
 
 ## Performance Notes
 
@@ -284,7 +293,7 @@ npm run dev
 Use the `--verbose` flag to see per-registry cache diagnostics:
 
 ```bash
-npm start -- --verbose
+npm start -- --authchain-resolve --verbose
 ```
 
 **Normal output shows:**
@@ -329,10 +338,53 @@ Cache saved to ./bcmr-registries/.authchain-cache.json
 
 ### JSON Fetching Performance
 
-- **JSON fetching** (`--fetch-json`): Can be slow fetching from IPFS gateways
+- **JSON fetching** (`--fetch-json`): Can be slow when fetching from IPFS gateways
 - Each registry requires HTTP requests with 2-second timeouts and up to 2 retry attempts
 - Locally cached JSON files are verified by hash and reused
 - Expect significant time for large datasets when fetching from network
+- Progress shown every 50 registries
+
+## Development
+
+Build and run in development mode:
+```bash
+npm run dev
+```
+
+## Requirements
+
+- **Node.js 18+** (for native `fetch` and `AbortController` support)
+- **TypeScript 5+**
+- **Access to a Chaingraph server** (GraphQL endpoint)
+- **Access to a Fulcrum server** (Electrum WebSocket endpoint)
+
+## Workflow Tips
+
+1. **First-time setup:**
+   ```bash
+   npm start -- --authchain-resolve --verbose
+   ```
+
+2. **Regular usage** (resolve and export):
+   ```bash
+   npm start -- --authchain-resolve --export IPFS
+   ```
+
+3. **Fetch JSON for analysis:**
+   ```bash
+   npm start -- --fetch-json
+   ```
+
+4. **Update registries** (uses cache):
+   ```bash
+   npm start -- --authchain-resolve
+   npm start -- --export ALL --export-file all-updated-urls.txt
+   ```
+
+5. **Force full rebuild** (ignores cache):
+   ```bash
+   npm start -- --authchain-resolve --clear-cache --no-cache
+   ```
 
 ## License
 

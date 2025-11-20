@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * BCMR IPFS Link Extractor
- * Console application to fetch and save IPFS links from Bitcoin Cash Metadata Registries
+ * BCMR Registry Tool
+ * Console application to resolve, export, and fetch Bitcoin Cash Metadata Registries
  */
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
@@ -14,62 +14,79 @@ import { createHash } from 'crypto';
 // Load environment variables
 dotenv.config();
 
-interface IPFSLinkOutput {
+/**
+ * Registry entry in authhead.json (active registries only)
+ */
+interface AuthheadRegistry {
   tokenId: string;
+  authbase: string;
+  authhead: string;
   blockHeight: number;
   hash: string;
-  ipfsUri: string;
-  authchainLength?: number;
-  isActive?: boolean;
-  registryValid?: boolean;
-  registryFetched?: boolean;
-  jsonPath?: string;
+  uris: string[];
+  authchainLength: number;
+  isActive: boolean;
+  isBurned: boolean;
+  isValid: boolean;
 }
 
 /**
  * Parse command line arguments
  */
 function parseArgs(): {
-  format: 'txt' | 'json';
-  output: string;
+  authchainResolve: boolean;
+  export: string | null;
   fetchJson: boolean;
+  authheadFile: string;
+  exportFile: string;
   jsonFolder: string;
   useCache: boolean;
   clearCache: boolean;
   verbose: boolean;
   concurrency: number;
+  showHelp: boolean;
 } {
   const args = process.argv.slice(2);
-  let format: 'txt' | 'json' = 'txt';
-  let output = 'bcmr-ipfs-links.txt';
+  let authchainResolve = false;
+  let exportProtocols: string | null = null;
   let fetchJson = false;
+  let authheadFile = './authhead.json';
+  let exportFile = 'exported-urls.txt';
   let jsonFolder = './bcmr-registries';
   let useCache = true;
   let clearCache = false;
   let verbose = false;
   let concurrency = 50;
+  let showHelp = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    if (arg === '--format' || arg === '-f') {
-      const formatValue = args[i + 1]?.toLowerCase();
-      if (formatValue === 'json' || formatValue === 'txt') {
-        format = formatValue;
-        i++;
-      } else {
-        console.error('Error: --format must be either "txt" or "json"');
-        process.exit(1);
-      }
-    } else if (arg === '--output' || arg === '-o') {
-      output = args[i + 1];
-      if (!output) {
-        console.error('Error: --output requires a filename');
+    if (arg === '--authchain-resolve') {
+      authchainResolve = true;
+    } else if (arg === '--export') {
+      exportProtocols = args[i + 1];
+      if (!exportProtocols) {
+        console.error('Error: --export requires protocol list (IPFS, HTTPS, OTHER, ALL)');
         process.exit(1);
       }
       i++;
     } else if (arg === '--fetch-json') {
       fetchJson = true;
+    } else if (arg === '--authhead-file') {
+      authheadFile = args[i + 1];
+      if (!authheadFile) {
+        console.error('Error: --authhead-file requires a path');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--export-file') {
+      exportFile = args[i + 1];
+      if (!exportFile) {
+        console.error('Error: --export-file requires a filename');
+        process.exit(1);
+      }
+      i++;
     } else if (arg === '--json-folder') {
       jsonFolder = args[i + 1];
       if (!jsonFolder) {
@@ -92,8 +109,7 @@ function parseArgs(): {
       concurrency = concurrencyValue;
       i++;
     } else if (arg === '--help' || arg === '-h') {
-      printUsage();
-      process.exit(0);
+      showHelp = true;
     } else {
       console.error(`Error: Unknown argument "${arg}"`);
       printUsage();
@@ -101,7 +117,19 @@ function parseArgs(): {
     }
   }
 
-  return { format, output, fetchJson, jsonFolder, useCache, clearCache, verbose, concurrency };
+  return {
+    authchainResolve,
+    export: exportProtocols,
+    fetchJson,
+    authheadFile,
+    exportFile,
+    jsonFolder,
+    useCache,
+    clearCache,
+    verbose,
+    concurrency,
+    showHelp,
+  };
 }
 
 /**
@@ -109,30 +137,51 @@ function parseArgs(): {
  */
 function printUsage(): void {
   console.log(`
-BCMR IPFS Link Extractor
+BCMR Registry Tool
 
-Usage: npm start [options]
+Usage: npm start [command] [options]
+
+Commands:
+  --authchain-resolve       Resolve authchains and save to authhead.json
+  --export <protocols>      Export URLs from authhead.json (IPFS, HTTPS, OTHER, ALL)
+  --fetch-json              Fetch BCMR JSON files from authhead.json
 
 Options:
-  --format, -f <txt|json>   Output format (default: txt)
-  --output, -o <filename>   Output filename (default: bcmr-ipfs-links.txt)
-  --fetch-json              Fetch and validate registry JSON from URIs
-  --json-folder <path>      Folder to save registry JSON files (default: ./bcmr-registries)
+  --authhead-file <path>    Path to authhead.json (default: ./authhead.json)
+  --export-file <filename>  Export output filename (default: exported-urls.txt)
+  --json-folder <path>      Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --no-cache                Disable authchain caching (force full resolution)
   --clear-cache             Delete cache before running
   --concurrency, -c <num>   Parallel query concurrency (1-200, default: 50)
   --verbose, -v             Enable verbose logging for detailed diagnostics
   --help, -h                Show this help message
 
-Examples:
-  npm start                                   # Save IPFS links only
-  npm start --format json                     # Save as JSON with metadata
-  npm start --fetch-json                      # Fetch and validate registry JSON
-  npm start --fetch-json --json-folder ./data # Custom JSON storage folder
-  npm start --output my-links.txt             # Custom output filename
-  npm start --no-cache                        # Force full authchain resolution
-  npm start --clear-cache                     # Clear cache and rebuild
-  npm start --verbose                         # Show per-registry cache diagnostics
+Workflow Examples:
+
+  1. Resolve authchains (creates authhead.json):
+     npm start -- --authchain-resolve
+
+  2. Export IPFS URLs from authhead.json:
+     npm start -- --export IPFS
+
+  3. Export multiple protocol types:
+     npm start -- --export IPFS,HTTPS --export-file all-urls.txt
+
+  4. Fetch BCMR JSON files:
+     npm start -- --fetch-json
+
+  5. Combined workflow (all in one):
+     npm start -- --authchain-resolve --export IPFS --fetch-json
+
+  6. Custom authhead.json location:
+     npm start -- --authchain-resolve --authhead-file ./data/authhead.json
+     npm start -- --export IPFS --authhead-file ./data/authhead.json
+
+Protocol Filters:
+  IPFS   - IPFS URIs (ipfs://)
+  HTTPS  - HTTP and HTTPS URIs (http://, https://)
+  OTHER  - Other protocols (dweb://, etc.)
+  ALL    - All URIs regardless of protocol
 
 Environment Variables:
   CHAINGRAPH_URL    GraphQL endpoint for Chaingraph (required)
@@ -149,121 +198,262 @@ Performance:
 }
 
 /**
- * Extract IPFS URIs from registries
+ * Load authhead.json file
  */
-async function extractIPFSLinks(
-  registries: Awaited<ReturnType<typeof getBCMRRegistries>>,
-  fetchJson: boolean,
-  jsonFolder: string
-): Promise<IPFSLinkOutput[]> {
-  const results: IPFSLinkOutput[] = [];
+function loadAuthheadFile(authheadFile: string): AuthheadRegistry[] {
+  if (!existsSync(authheadFile)) {
+    console.error(`Error: ${authheadFile} not found. Run with --authchain-resolve first.`);
+    process.exit(1);
+  }
 
-  // Create JSON folder if needed
-  if (fetchJson) {
-    try {
-      mkdirSync(jsonFolder, { recursive: true });
-    } catch (error) {
-      console.error(`Failed to create folder ${jsonFolder}:`, error);
-      throw error;
+  try {
+    const fileContent = readFileSync(authheadFile, 'utf-8');
+    const data = JSON.parse(fileContent);
+
+    // Validate structure
+    if (!Array.isArray(data)) {
+      console.error(`Error: Invalid ${authheadFile} format (expected array). Please run --authchain-resolve again.`);
+      process.exit(1);
+    }
+
+    // Basic validation of entries
+    for (const entry of data) {
+      if (!entry.tokenId || !entry.uris || !Array.isArray(entry.uris)) {
+        console.error(`Error: Invalid ${authheadFile} format (missing required fields). Please run --authchain-resolve again.`);
+        process.exit(1);
+      }
+    }
+
+    return data as AuthheadRegistry[];
+  } catch (error) {
+    console.error(`Error: Failed to read ${authheadFile}: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Classify URL protocol
+ */
+function classifyUrlProtocol(url: string): 'IPFS' | 'HTTPS' | 'OTHER' {
+  if (url.startsWith('ipfs://')) {
+    return 'IPFS';
+  } else if (url.startsWith('https://') || url.startsWith('http://')) {
+    return 'HTTPS';
+  } else {
+    return 'OTHER';
+  }
+}
+
+/**
+ * Parse protocols filter string
+ */
+function parseProtocolsFilter(protocolsStr: string): Set<'IPFS' | 'HTTPS' | 'OTHER' | 'ALL'> {
+  const protocols = protocolsStr.split(',').map((p) => p.trim().toUpperCase());
+  const validProtocols: Set<'IPFS' | 'HTTPS' | 'OTHER' | 'ALL'> = new Set();
+
+  for (const protocol of protocols) {
+    if (protocol === 'IPFS' || protocol === 'HTTPS' || protocol === 'OTHER' || protocol === 'ALL') {
+      validProtocols.add(protocol as 'IPFS' | 'HTTPS' | 'OTHER' | 'ALL');
+    } else {
+      console.error(`Error: Unknown protocol '${protocol}'. Valid: IPFS, HTTPS, OTHER, ALL`);
+      process.exit(1);
     }
   }
 
-  let fetchedCount = 0;
-  let validCount = 0;
-  let failedCount = 0;
+  if (validProtocols.size === 0) {
+    console.error('Error: --export requires at least one protocol (IPFS, HTTPS, OTHER, ALL)');
+    process.exit(1);
+  }
 
-  for (let i = 0; i < registries.length; i++) {
-    const registry = registries[i];
+  return validProtocols;
+}
 
-    // Show progress for JSON fetching
-    if (fetchJson && (i + 1) % 50 === 0) {
-      console.log(`  Fetching and validating... ${i + 1}/${registries.length}`);
-    }
+/**
+ * Command: Resolve authchains and save to authhead.json
+ */
+async function doAuthchainResolve(options: {
+  authheadFile: string;
+  jsonFolder: string;
+  useCache: boolean;
+  clearCache: boolean;
+  verbose: boolean;
+  concurrency: number;
+}): Promise<void> {
+  const { authheadFile, jsonFolder, useCache, clearCache, verbose, concurrency } = options;
 
-    // Filter out burned, invalid, or inactive registries
-    if (registry.isBurned || !registry.isValid || !registry.isAuthheadUnspent) {
-      continue;
-    }
+  console.log('Fetching BCMR registries from Chaingraph...');
+  const registries = await getBCMRRegistries({
+    useCache,
+    cachePath: join(jsonFolder, '.authchain-cache.json'),
+    verbose,
+    concurrency,
+  });
 
-    // Extract only IPFS URIs (exclude HTTPS and other protocols)
+  console.log(`\nFound ${registries.length} total registries`);
+
+  // Filter to active registries only (non-burned, valid, authhead unspent)
+  const activeRegistries = registries.filter(
+    (r) => !r.isBurned && r.isValid && r.isAuthheadUnspent
+  );
+
+  console.log(`Active registries (non-burned, valid, authhead unspent): ${activeRegistries.length}`);
+
+  // Convert to authhead.json format
+  const authheadData: AuthheadRegistry[] = activeRegistries.map((r) => ({
+    tokenId: r.tokenId,
+    authbase: r.authbase,
+    authhead: r.authhead,
+    blockHeight: r.blockHeight,
+    hash: r.hash,
+    uris: r.uris,
+    authchainLength: r.authchainLength,
+    isActive: r.isAuthheadUnspent,
+    isBurned: r.isBurned,
+    isValid: r.isValid,
+  }));
+
+  // Save to authhead.json
+  const jsonContent = JSON.stringify(authheadData, null, 2);
+  writeFileSync(authheadFile, jsonContent, 'utf-8');
+
+  console.log(`\n✓ Saved ${activeRegistries.length} active registries to ${authheadFile}`);
+}
+
+/**
+ * Command: Export URLs from authhead.json
+ */
+async function doExport(options: {
+  authheadFile: string;
+  exportFile: string;
+  protocols: string;
+}): Promise<void> {
+  const { authheadFile, exportFile, protocols } = options;
+
+  // Load authhead.json
+  console.log(`Reading ${authheadFile}...`);
+  const registries = loadAuthheadFile(authheadFile);
+
+  // Parse protocol filter
+  const protocolsFilter = parseProtocolsFilter(protocols);
+
+  // Extract and filter URLs
+  const urls: string[] = [];
+  for (const registry of registries) {
     for (const uri of registry.uris) {
-      if (uri.startsWith('ipfs://')) {
-        const linkOutput: IPFSLinkOutput = {
-          tokenId: registry.tokenId,
-          blockHeight: registry.blockHeight,
-          hash: registry.hash,
-          ipfsUri: uri,
-          authchainLength: registry.authchainLength,
-          isActive: registry.isAuthheadUnspent,
-        };
+      const protocol = classifyUrlProtocol(uri);
 
-        // Optionally fetch and validate registry JSON
-        if (fetchJson) {
-          try {
-            const jsonPath = join(jsonFolder, `${registry.tokenId}.json`);
-            let registryJson = null;
-
-            // Check if file already exists locally
-            if (existsSync(jsonPath)) {
-              try {
-                const fileContent = readFileSync(jsonPath, 'utf-8');
-                const computedHash = createHash('sha256').update(fileContent).digest('hex');
-
-                if (computedHash === registry.hash) {
-                  // Hash matches, use existing file (skip network fetch)
-                  registryJson = JSON.parse(fileContent);
-                } else {
-                  // Hash mismatch, file is outdated or corrupted
-                  console.warn(`Hash mismatch for ${registry.tokenId}, refetching...`);
-                }
-              } catch (error) {
-                // File exists but can't read/parse, will fetch from network
-                console.warn(`Error reading local file for ${registry.tokenId}, refetching...`);
-              }
-            }
-
-            // If not found locally or hash mismatch, fetch from network
-            if (!registryJson) {
-              const fetchResult = await fetchAndValidateRegistry(registry.uris, registry.hash);
-
-              if (fetchResult) {
-                // Save the raw JSON content (preserves exact formatting and hash)
-                writeFileSync(jsonPath, fetchResult.rawContent, 'utf-8');
-                registryJson = fetchResult.json;
-              }
-            }
-
-            // Update linkOutput based on whether we got valid JSON
-            if (registryJson) {
-              linkOutput.registryValid = true;
-              linkOutput.registryFetched = true;
-              linkOutput.jsonPath = jsonPath;
-              fetchedCount++;
-              validCount++;
-            } else {
-              linkOutput.registryValid = false;
-              linkOutput.registryFetched = false;
-              failedCount++;
-            }
-          } catch (error) {
-            linkOutput.registryValid = false;
-            linkOutput.registryFetched = false;
-            failedCount++;
-          }
-        }
-
-        results.push(linkOutput);
+      // Check if protocol matches filter
+      if (protocolsFilter.has('ALL') || protocolsFilter.has(protocol)) {
+        urls.push(uri);
       }
     }
   }
 
-  if (fetchJson) {
-    console.log(
-      `\nRegistry JSON summary: Fetched: ${fetchedCount}, Valid: ${validCount}, Failed: ${failedCount}`
-    );
+  if (urls.length === 0) {
+    console.log('No URLs found matching the specified protocols.');
+    return;
   }
 
-  return results;
+  // Count by protocol for statistics
+  const ipfsCount = urls.filter((u) => classifyUrlProtocol(u) === 'IPFS').length;
+  const httpsCount = urls.filter((u) => classifyUrlProtocol(u) === 'HTTPS').length;
+  const otherCount = urls.filter((u) => classifyUrlProtocol(u) === 'OTHER').length;
+
+  // Save to file (one URL per line)
+  const txtOutput = urls.join('\n');
+  writeFileSync(exportFile, txtOutput, 'utf-8');
+
+  console.log(`\n✓ Exported ${urls.length} URLs to ${exportFile}`);
+  console.log(`  IPFS: ${ipfsCount}, HTTPS: ${httpsCount}, OTHER: ${otherCount}`);
+}
+
+/**
+ * Command: Fetch BCMR JSON files from authhead.json
+ */
+async function doFetchJson(options: {
+  authheadFile: string;
+  jsonFolder: string;
+}): Promise<void> {
+  const { authheadFile, jsonFolder } = options;
+
+  // Load authhead.json
+  console.log(`Reading ${authheadFile}...`);
+  const registries = loadAuthheadFile(authheadFile);
+
+  // Create JSON folder if needed
+  try {
+    mkdirSync(jsonFolder, { recursive: true });
+  } catch (error) {
+    console.error(`Failed to create folder ${jsonFolder}:`, error);
+    throw error;
+  }
+
+  console.log(`\nFetching BCMR JSON files (this may take a while)...`);
+
+  let fetchedCount = 0;
+  let validCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (let i = 0; i < registries.length; i++) {
+    const registry = registries[i];
+
+    // Show progress
+    if ((i + 1) % 50 === 0) {
+      console.log(`  Processing... ${i + 1}/${registries.length}`);
+    }
+
+    const jsonPath = join(jsonFolder, `${registry.tokenId}.json`);
+    let registryJson = null;
+
+    // Check if file already exists locally
+    if (existsSync(jsonPath)) {
+      try {
+        const fileContent = readFileSync(jsonPath, 'utf-8');
+        const computedHash = createHash('sha256').update(fileContent).digest('hex');
+
+        if (computedHash === registry.hash) {
+          // Hash matches, use existing file (skip network fetch)
+          registryJson = JSON.parse(fileContent);
+          skippedCount++;
+        } else {
+          // Hash mismatch, file is outdated or corrupted
+          console.warn(`Hash mismatch for ${registry.tokenId}, refetching...`);
+        }
+      } catch (error) {
+        // File exists but can't read/parse, will fetch from network
+        console.warn(`Error reading local file for ${registry.tokenId}, refetching...`);
+      }
+    }
+
+    // If not found locally or hash mismatch, fetch from network
+    if (!registryJson) {
+      try {
+        const fetchResult = await fetchAndValidateRegistry(registry.uris, registry.hash);
+
+        if (fetchResult) {
+          // Save the raw JSON content (preserves exact formatting and hash)
+          writeFileSync(jsonPath, fetchResult.rawContent, 'utf-8');
+          registryJson = fetchResult.json;
+          fetchedCount++;
+          validCount++;
+        } else {
+          failedCount++;
+        }
+      } catch (error) {
+        failedCount++;
+      }
+    } else {
+      validCount++;
+    }
+  }
+
+  console.log(`\n✓ BCMR JSON summary:`);
+  console.log(`  Fetched from network: ${fetchedCount}`);
+  console.log(`  Used local cache: ${skippedCount}`);
+  console.log(`  Total valid: ${validCount}`);
+  console.log(`  Failed: ${failedCount}`);
+  console.log(`  Saved to: ${jsonFolder}/`);
 }
 
 /**
@@ -271,24 +461,32 @@ async function extractIPFSLinks(
  */
 async function main(): Promise<void> {
   try {
-    // Check for required environment variables
-    if (!process.env.CHAINGRAPH_URL) {
-      console.error('Error: CHAINGRAPH_URL environment variable is not set');
-      console.error('Please create a .env file with CHAINGRAPH_URL=<your-chaingraph-url>');
-      process.exit(1);
+    const args = parseArgs();
+
+    // Show help if requested or no commands specified
+    if (args.showHelp || (!args.authchainResolve && !args.export && !args.fetchJson)) {
+      printUsage();
+      process.exit(0);
     }
 
-    if (!process.env.FULCRUM_WS_URL) {
-      console.error('Error: FULCRUM_WS_URL environment variable is not set');
-      console.error('Please add FULCRUM_WS_URL=<your-fulcrum-ws-url> to .env file');
-      process.exit(1);
+    // Check for required environment variables (only for commands that need them)
+    if (args.authchainResolve) {
+      if (!process.env.CHAINGRAPH_URL) {
+        console.error('Error: CHAINGRAPH_URL environment variable is not set');
+        console.error('Please create a .env file with CHAINGRAPH_URL=<your-chaingraph-url>');
+        process.exit(1);
+      }
+
+      if (!process.env.FULCRUM_WS_URL) {
+        console.error('Error: FULCRUM_WS_URL environment variable is not set');
+        console.error('Please add FULCRUM_WS_URL=<your-fulcrum-ws-url> to .env file');
+        process.exit(1);
+      }
     }
 
-    const { format, output, fetchJson, jsonFolder, useCache, clearCache, verbose, concurrency } = parseArgs();
-
-    // Handle cache clearing
-    if (clearCache) {
-      const cachePath = join(jsonFolder, '.authchain-cache.json');
+    // Handle cache clearing (only for authchain-resolve)
+    if (args.clearCache && args.authchainResolve) {
+      const cachePath = join(args.jsonFolder, '.authchain-cache.json');
       try {
         if (existsSync(cachePath)) {
           unlinkSync(cachePath);
@@ -301,48 +499,31 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log('Fetching BCMR registries from Chaingraph...');
-    const registries = await getBCMRRegistries({
-      useCache,
-      cachePath: join(jsonFolder, '.authchain-cache.json'),
-      verbose,
-      concurrency,
-    });
-    console.log(`\nFound ${registries.length} total registries`);
-
-    // Show authchain summary
-    const activeRegistries = registries.filter((r) => r.isAuthheadUnspent);
-    console.log(`Active registries (authhead unspent): ${activeRegistries.length}`);
-
-    console.log('\nExtracting IPFS links...');
-    if (fetchJson) {
-      console.log(`Fetching and validating registry JSON (this may take a while)...`);
+    // Execute commands in order: resolve -> export -> fetch
+    if (args.authchainResolve) {
+      await doAuthchainResolve({
+        authheadFile: args.authheadFile,
+        jsonFolder: args.jsonFolder,
+        useCache: args.useCache,
+        clearCache: args.clearCache,
+        verbose: args.verbose,
+        concurrency: args.concurrency,
+      });
     }
 
-    const ipfsLinks = await extractIPFSLinks(registries, fetchJson, jsonFolder);
-    console.log(`Extracted ${ipfsLinks.length} IPFS links from active registries`);
-
-    if (ipfsLinks.length === 0) {
-      console.log('No IPFS links found. Nothing to save.');
-      return;
+    if (args.export) {
+      await doExport({
+        authheadFile: args.authheadFile,
+        exportFile: args.exportFile,
+        protocols: args.export,
+      });
     }
 
-    console.log(`\nSaving to ${output} (format: ${format})...`);
-
-    if (format === 'json') {
-      // Save as JSON
-      const jsonOutput = JSON.stringify(ipfsLinks, null, 2);
-      writeFileSync(output, jsonOutput, 'utf-8');
-    } else {
-      // Save as plain text (one link per line)
-      const txtOutput = ipfsLinks.map((link) => link.ipfsUri).join('\n');
-      writeFileSync(output, txtOutput, 'utf-8');
-    }
-
-    console.log(`✓ Successfully saved ${ipfsLinks.length} IPFS links to ${output}`);
-
-    if (fetchJson) {
-      console.log(`✓ Registry JSON files saved to ${jsonFolder}/`);
+    if (args.fetchJson) {
+      await doFetchJson({
+        authheadFile: args.authheadFile,
+        jsonFolder: args.jsonFolder,
+      });
     }
 
     // Clean up: close WebSocket connection pool
