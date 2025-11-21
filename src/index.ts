@@ -10,6 +10,7 @@ import { closeConnectionPool } from './lib/fulcrum-client.js';
 import * as dotenv from 'dotenv';
 import { join } from 'path';
 import { createHash } from 'crypto';
+import { execSync, spawn } from 'child_process';
 
 // Load environment variables
 dotenv.config();
@@ -39,10 +40,12 @@ function parseArgs(): {
   exportBcmrIpfsCids: boolean;
   exportCashtokenIpfsCids: boolean;
   fetchJson: boolean;
+  ipfsPin: boolean;
   authheadFile: string;
   exportFile: string;
   cidsFile: string;
   cashtokenCidsFile: string;
+  ipfsPinCidsFile: string;
   jsonFolder: string;
   maxFileSizeMB: number;
   useCache: boolean;
@@ -57,10 +60,12 @@ function parseArgs(): {
   let exportBcmrIpfsCids = false;
   let exportCashtokenIpfsCids = false;
   let fetchJson = false;
+  let ipfsPin = false;
   let authheadFile = './authhead.json';
   let exportFile = 'exported-urls.txt';
   let cidsFile = 'bcmr-ipfs-cids.txt';
   let cashtokenCidsFile = 'cashtoken-ipfs-cids.txt';
+  let ipfsPinCidsFile = 'bcmr-ipfs-cids.txt';
   let jsonFolder = './bcmr-registries';
   let maxFileSizeMB = 50; // Default: 50MB
   let useCache = true;
@@ -87,6 +92,8 @@ function parseArgs(): {
       exportBcmrIpfsCids = true;
     } else if (arg === '--export-cashtoken-ipfs-cids') {
       exportCashtokenIpfsCids = true;
+    } else if (arg === '--ipfs-pin') {
+      ipfsPin = true;
     } else if (arg === '--authhead-file') {
       authheadFile = args[i + 1];
       if (!authheadFile) {
@@ -112,6 +119,13 @@ function parseArgs(): {
       cashtokenCidsFile = args[i + 1];
       if (!cashtokenCidsFile) {
         console.error('Error: --cashtoken-cids-file requires a filename');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--ipfs-pin-file') {
+      ipfsPinCidsFile = args[i + 1];
+      if (!ipfsPinCidsFile) {
+        console.error('Error: --ipfs-pin-file requires a filename');
         process.exit(1);
       }
       i++;
@@ -159,10 +173,12 @@ function parseArgs(): {
     exportBcmrIpfsCids,
     exportCashtokenIpfsCids,
     fetchJson,
+    ipfsPin,
     authheadFile,
     exportFile,
     cidsFile,
     cashtokenCidsFile,
+    ipfsPinCidsFile,
     jsonFolder,
     maxFileSizeMB,
     useCache,
@@ -188,12 +204,14 @@ Commands:
   --export-bcmr-ipfs-cids       Export IPFS CIDs from authhead.json (deduplicated, sorted)
   --export-cashtoken-ipfs-cids  Extract IPFS CIDs from BCMR JSON files (deduplicated, sorted)
   --fetch-json                  Fetch BCMR JSON files from authhead.json
+  --ipfs-pin                    Pin IPFS CIDs using local IPFS daemon
 
 Options:
   --authhead-file <path>        Path to authhead.json (default: ./authhead.json)
   --export-file <filename>      Export output filename (default: exported-urls.txt)
   --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
   --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
+  --ipfs-pin-file <filename>    CIDs file to pin (default: bcmr-ipfs-cids.txt)
   --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --max-file-size-mb <num>      Max JSON file size in MB (1-1000, default: 50)
   --no-cache                    Disable authchain caching (force full resolution)
@@ -222,12 +240,19 @@ Workflow Examples:
   6. Fetch BCMR JSON files:
      npm start -- --fetch-json
 
-  7. Combined workflow (all in one):
+  7. Pin IPFS CIDs using local IPFS daemon:
+     npm start -- --ipfs-pin
+     npm start -- --ipfs-pin --ipfs-pin-file cashtoken-ipfs-cids.txt
+
+  8. Combined workflow (export and pin):
+     npm start -- --export-bcmr-ipfs-cids --ipfs-pin
+
+  9. Combined workflow (all in one):
      npm start -- --authchain-resolve --export IPFS --export-bcmr-ipfs-cids --fetch-json
 
-  7. Custom authhead.json location:
-     npm start -- --authchain-resolve --authhead-file ./data/authhead.json
-     npm start -- --export IPFS --authhead-file ./data/authhead.json
+  10. Custom authhead.json location:
+      npm start -- --authchain-resolve --authhead-file ./data/authhead.json
+      npm start -- --export IPFS --authhead-file ./data/authhead.json
 
 Protocol Filters:
   IPFS   - IPFS URIs (ipfs://)
@@ -751,6 +776,152 @@ async function doExportCashtokenIPFSCIDs(options: {
 }
 
 /**
+ * Command: Pin IPFS CIDs using local IPFS daemon
+ */
+async function doIPFSPin(options: {
+  cidsFile: string;
+  verbose: boolean;
+  concurrency: number;
+}): Promise<void> {
+  const { cidsFile, verbose, concurrency } = options;
+
+  // Check if ipfs command exists
+  console.log('Checking IPFS CLI availability...');
+  try {
+    execSync('which ipfs', { stdio: 'ignore' });
+  } catch (error) {
+    console.error('Error: ipfs command not found');
+    console.error('Please install IPFS CLI:');
+    console.error('  - https://docs.ipfs.tech/install/command-line/');
+    console.error('  - Or run: brew install ipfs (macOS) or apt install ipfs (Linux)');
+    process.exit(1);
+  }
+
+  // Check if IPFS daemon is running
+  try {
+    execSync('ipfs id', { stdio: 'ignore', timeout: 5000 });
+  } catch (error) {
+    console.error('Error: IPFS daemon not running');
+    console.error('Please start IPFS daemon in another terminal:');
+    console.error('  ipfs daemon');
+    process.exit(1);
+  }
+
+  // Check if CID file exists
+  if (!existsSync(cidsFile)) {
+    console.error(`Error: ${cidsFile} not found.`);
+    console.error('Please run one of these commands first:');
+    console.error('  npm start -- --export-bcmr-ipfs-cids');
+    console.error('  npm start -- --export-cashtoken-ipfs-cids');
+    process.exit(1);
+  }
+
+  // Read and parse CIDs from file
+  console.log(`Reading IPFS CIDs from ${cidsFile}...`);
+  const fileContent = readFileSync(cidsFile, 'utf-8');
+  const cids = fileContent
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+
+  if (cids.length === 0) {
+    console.log('No CIDs found in file.');
+    return;
+  }
+
+  console.log(`Found ${cids.length} CIDs to pin`);
+
+  // Pin CIDs with parallel processing
+  let pinnedCount = 0;
+  let alreadyPinnedCount = 0;
+  let failedCount = 0;
+  const startTime = Date.now();
+
+  // Process CIDs in batches with concurrency control
+  const processBatch = async (batch: string[]): Promise<void> => {
+    const results = await Promise.all(
+      batch.map(async (cid) => {
+        try {
+          return await new Promise<{ cid: string; success: boolean; alreadyPinned: boolean }>((resolve, reject) => {
+            const proc = spawn('ipfs', ['pin', 'add', cid]);
+
+            let stdout = '';
+            let stderr = '';
+
+            proc.stdout.on('data', (data) => { stdout += data; });
+            proc.stderr.on('data', (data) => { stderr += data; });
+
+            proc.on('close', (code) => {
+              if (code === 0 || stdout.includes('recursive')) {
+                // Check if already pinned
+                const alreadyPinned = stdout.includes('already') || stderr.includes('already');
+                resolve({ cid, success: true, alreadyPinned });
+              } else {
+                reject(new Error(stderr.trim() || 'Unknown error'));
+              }
+            });
+
+            proc.on('error', (err) => {
+              reject(err);
+            });
+          });
+        } catch (error) {
+          return {
+            cid,
+            success: false,
+            alreadyPinned: false,
+            error: error instanceof Error ? error.message : String(error)
+          };
+        }
+      })
+    );
+
+    // Update counters and log failures
+    for (const result of results) {
+      if (result.success) {
+        if (result.alreadyPinned) {
+          alreadyPinnedCount++;
+          if (verbose) {
+            console.log(`  ${result.cid.substring(0, 12)}... already pinned`);
+          }
+        } else {
+          pinnedCount++;
+          if (verbose) {
+            console.log(`  ${result.cid.substring(0, 12)}... pinned`);
+          }
+        }
+      } else {
+        failedCount++;
+        const errorMsg = 'error' in result ? result.error : 'Unknown error';
+        console.warn(`Warning: Failed to pin ${result.cid.substring(0, 12)}...: ${errorMsg}`);
+      }
+    }
+  };
+
+  // Process CIDs in batches
+  for (let i = 0; i < cids.length; i += concurrency) {
+    const batch = cids.slice(i, Math.min(i + concurrency, cids.length));
+    await processBatch(batch);
+
+    // Progress reporting
+    const processed = Math.min(i + concurrency, cids.length);
+    if (processed % 50 === 0 || processed === cids.length) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      const rate = ((processed / (Date.now() - startTime)) * 1000).toFixed(1);
+      console.log(`  Pinning CIDs... ${processed}/${cids.length} (${elapsed}s, ${rate} CIDs/s)`);
+    }
+  }
+
+  // Summary report
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`\n✓ IPFS pinning complete in ${elapsed}s`);
+  console.log(`  Newly pinned: ${pinnedCount}`);
+  console.log(`  Already pinned: ${alreadyPinnedCount}`);
+  console.log(`  Failed: ${failedCount}`);
+  console.log(`  Total processed: ${cids.length}`);
+}
+
+/**
  * Command: Fetch BCMR JSON files from authhead.json
  */
 async function doFetchJson(options: {
@@ -857,7 +1028,7 @@ async function main(): Promise<void> {
     const args = parseArgs();
 
     // Show help if requested or no commands specified
-    if (args.showHelp || (!args.authchainResolve && !args.export && !args.exportBcmrIpfsCids && !args.exportCashtokenIpfsCids && !args.fetchJson)) {
+    if (args.showHelp || (!args.authchainResolve && !args.export && !args.exportBcmrIpfsCids && !args.exportCashtokenIpfsCids && !args.fetchJson && !args.ipfsPin)) {
       printUsage();
       process.exit(0);
     }
@@ -931,6 +1102,14 @@ async function main(): Promise<void> {
       await doFetchJson({
         authheadFile: args.authheadFile,
         jsonFolder: args.jsonFolder,
+      });
+    }
+
+    if (args.ipfsPin) {
+      await doIPFSPin({
+        cidsFile: args.ipfsPinCidsFile,
+        verbose: args.verbose,
+        concurrency: args.concurrency,
       });
     }
 
