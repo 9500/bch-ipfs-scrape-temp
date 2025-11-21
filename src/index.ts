@@ -37,10 +37,12 @@ function parseArgs(): {
   authchainResolve: boolean;
   export: string | null;
   exportBcmrIpfsCids: boolean;
+  exportCashtokenIpfsCids: boolean;
   fetchJson: boolean;
   authheadFile: string;
   exportFile: string;
   cidsFile: string;
+  cashtokenCidsFile: string;
   jsonFolder: string;
   useCache: boolean;
   clearCache: boolean;
@@ -52,10 +54,12 @@ function parseArgs(): {
   let authchainResolve = false;
   let exportProtocols: string | null = null;
   let exportBcmrIpfsCids = false;
+  let exportCashtokenIpfsCids = false;
   let fetchJson = false;
   let authheadFile = './authhead.json';
   let exportFile = 'exported-urls.txt';
   let cidsFile = 'bcmr-ipfs-cids.txt';
+  let cashtokenCidsFile = 'cashtoken-ipfs-cids.txt';
   let jsonFolder = './bcmr-registries';
   let useCache = true;
   let clearCache = false;
@@ -79,6 +83,8 @@ function parseArgs(): {
       fetchJson = true;
     } else if (arg === '--export-bcmr-ipfs-cids') {
       exportBcmrIpfsCids = true;
+    } else if (arg === '--export-cashtoken-ipfs-cids') {
+      exportCashtokenIpfsCids = true;
     } else if (arg === '--authhead-file') {
       authheadFile = args[i + 1];
       if (!authheadFile) {
@@ -97,6 +103,13 @@ function parseArgs(): {
       cidsFile = args[i + 1];
       if (!cidsFile) {
         console.error('Error: --cids-file requires a filename');
+        process.exit(1);
+      }
+      i++;
+    } else if (arg === '--cashtoken-cids-file') {
+      cashtokenCidsFile = args[i + 1];
+      if (!cashtokenCidsFile) {
+        console.error('Error: --cashtoken-cids-file requires a filename');
         process.exit(1);
       }
       i++;
@@ -134,10 +147,12 @@ function parseArgs(): {
     authchainResolve,
     export: exportProtocols,
     exportBcmrIpfsCids,
+    exportCashtokenIpfsCids,
     fetchJson,
     authheadFile,
     exportFile,
     cidsFile,
+    cashtokenCidsFile,
     jsonFolder,
     useCache,
     clearCache,
@@ -157,16 +172,18 @@ BCMR Registry Tool
 Usage: npm start [command] [options]
 
 Commands:
-  --authchain-resolve       Resolve authchains and save to authhead.json
-  --export <protocols>      Export URLs from authhead.json (IPFS, HTTPS, OTHER, ALL)
-  --export-bcmr-ipfs-cids   Export only IPFS CIDs from authhead.json (deduplicated, sorted)
-  --fetch-json              Fetch BCMR JSON files from authhead.json
+  --authchain-resolve           Resolve authchains and save to authhead.json
+  --export <protocols>          Export URLs from authhead.json (IPFS, HTTPS, OTHER, ALL)
+  --export-bcmr-ipfs-cids       Export IPFS CIDs from authhead.json (deduplicated, sorted)
+  --export-cashtoken-ipfs-cids  Extract IPFS CIDs from BCMR JSON files (deduplicated, sorted)
+  --fetch-json                  Fetch BCMR JSON files from authhead.json
 
 Options:
-  --authhead-file <path>    Path to authhead.json (default: ./authhead.json)
-  --export-file <filename>  Export output filename (default: exported-urls.txt)
-  --cids-file <filename>    CIDs output filename (default: bcmr-ipfs-cids.txt)
-  --json-folder <path>      Folder for cache and BCMR JSON (default: ./bcmr-registries)
+  --authhead-file <path>        Path to authhead.json (default: ./authhead.json)
+  --export-file <filename>      Export output filename (default: exported-urls.txt)
+  --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
+  --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
+  --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --no-cache                Disable authchain caching (force full resolution)
   --clear-cache             Delete cache before running
   --concurrency, -c <num>   Parallel query concurrency (1-200, default: 50)
@@ -184,13 +201,16 @@ Workflow Examples:
   3. Export multiple protocol types:
      npm start -- --export IPFS,HTTPS --export-file all-urls.txt
 
-  4. Export only IPFS CIDs (deduplicated and sorted):
+  4. Export IPFS CIDs from authhead.json (deduplicated and sorted):
      npm start -- --export-bcmr-ipfs-cids
 
-  5. Fetch BCMR JSON files:
+  5. Extract IPFS CIDs from BCMR JSON files:
+     npm start -- --export-cashtoken-ipfs-cids
+
+  6. Fetch BCMR JSON files:
      npm start -- --fetch-json
 
-  6. Combined workflow (all in one):
+  7. Combined workflow (all in one):
      npm start -- --authchain-resolve --export IPFS --export-bcmr-ipfs-cids --fetch-json
 
   7. Custom authhead.json location:
@@ -519,6 +539,107 @@ async function doExportIPFSCIDs(options: {
 }
 
 /**
+ * Recursively extract IPFS CIDs from a JSON structure
+ * Traverses all strings, arrays, and objects looking for ipfs:// URIs
+ */
+function extractIPFSCIDsFromJSON(json: any, cids: Set<string>): void {
+  if (typeof json === 'string') {
+    // Check if string starts with ipfs://
+    if (json.startsWith('ipfs://')) {
+      const cid = extractCIDFromURL(json);
+      if (cid && isValidIPFSCID(cid)) {
+        cids.add(cid);
+      }
+    }
+  } else if (Array.isArray(json)) {
+    // Traverse array elements
+    for (const item of json) {
+      extractIPFSCIDsFromJSON(item, cids);
+    }
+  } else if (typeof json === 'object' && json !== null) {
+    // Traverse object properties
+    for (const value of Object.values(json)) {
+      extractIPFSCIDsFromJSON(value, cids);
+    }
+  }
+}
+
+/**
+ * Command: Extract IPFS CIDs from BCMR JSON files in a folder
+ */
+async function doExportCashtokenIPFSCIDs(options: {
+  jsonFolder: string;
+  cashtokenCidsFile: string;
+}): Promise<void> {
+  const { jsonFolder, cashtokenCidsFile } = options;
+
+  // Check if folder exists
+  if (!existsSync(jsonFolder)) {
+    console.error(`Error: Folder not found: ${jsonFolder}`);
+    console.error('Please run --fetch-json first to download BCMR JSON files.');
+    process.exit(1);
+  }
+
+  console.log(`Reading BCMR JSON files from ${jsonFolder}...`);
+
+  // Read all .json files from folder (excluding cache files)
+  const { readdirSync } = await import('fs');
+  const files = readdirSync(jsonFolder).filter(
+    (f) => f.endsWith('.json') && !f.startsWith('.')
+  );
+
+  if (files.length === 0) {
+    console.log('No JSON files found in folder.');
+    console.log('Please run --fetch-json first to download BCMR JSON files.');
+    return;
+  }
+
+  console.log(`Found ${files.length} JSON files to process`);
+
+  const allCids = new Set<string>();
+  let processedCount = 0;
+  let errorCount = 0;
+
+  for (const file of files) {
+    const filePath = join(jsonFolder, file);
+
+    try {
+      const fileContent = readFileSync(filePath, 'utf-8');
+      const json = JSON.parse(fileContent);
+
+      // Recursively extract IPFS CIDs from the JSON
+      extractIPFSCIDsFromJSON(json, allCids);
+      processedCount++;
+
+      // Show progress every 500 files
+      if (processedCount % 500 === 0) {
+        console.log(`  Processed ${processedCount}/${files.length} files...`);
+      }
+    } catch (error) {
+      errorCount++;
+      console.warn(`Warning: Failed to process ${file}:`, error instanceof Error ? error.message : error);
+    }
+  }
+
+  if (allCids.size === 0) {
+    console.log('\nNo IPFS CIDs found in BCMR JSON files.');
+    return;
+  }
+
+  // Convert to array, sort alphabetically
+  const uniqueCids = Array.from(allCids).sort();
+
+  // Save to file (one CID per line)
+  const txtOutput = uniqueCids.join('\n');
+  writeFileSync(cashtokenCidsFile, txtOutput, 'utf-8');
+
+  console.log(`\n✓ Extracted ${uniqueCids.length} unique IPFS CIDs from BCMR JSON files`);
+  console.log(`  Files processed: ${processedCount}`);
+  console.log(`  Files with errors: ${errorCount}`);
+  console.log(`  Output file: ${cashtokenCidsFile}`);
+}
+
+/**
  * Command: Fetch BCMR JSON files from authhead.json
  */
 async function doFetchJson(options: {
@@ -615,7 +736,7 @@ async function main(): Promise<void> {
     const args = parseArgs();
 
     // Show help if requested or no commands specified
-    if (args.showHelp || (!args.authchainResolve && !args.export && !args.exportBcmrIpfsCids && !args.fetchJson)) {
+    if (args.showHelp || (!args.authchainResolve && !args.export && !args.exportBcmrIpfsCids && !args.exportCashtokenIpfsCids && !args.fetchJson)) {
       printUsage();
       process.exit(0);
     }
@@ -674,6 +795,13 @@ async function main(): Promise<void> {
       await doExportIPFSCIDs({
         authheadFile: args.authheadFile,
         cidsFile: args.cidsFile,
+      });
+    }
+
+    if (args.exportCashtokenIpfsCids) {
+      await doExportCashtokenIPFSCIDs({
+        jsonFolder: args.jsonFolder,
+        cashtokenCidsFile: args.cashtokenCidsFile,
       });
     }
 
