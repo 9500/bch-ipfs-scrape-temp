@@ -646,10 +646,39 @@ export async function getBCMRRegistries(options?: {
 }
 
 /**
+ * Check if a hostname is an internal/private address
+ * SECURITY: Prevents SSRF attacks targeting internal services
+ */
+function isInternalHostname(hostname: string): boolean {
+  // Localhost patterns
+  if (/^(localhost|127\.|::1)$/i.test(hostname)) {
+    return true;
+  }
+
+  // Private IPv4 ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+  if (/^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(hostname)) {
+    return true;
+  }
+
+  // Link-local addresses (169.254.0.0/16, fe80::/10)
+  if (/^(169\.254\.|fe80:)/i.test(hostname)) {
+    return true;
+  }
+
+  // Private IPv6 ranges (fc00::/7, fd00::/8)
+  if (/^(fc00:|fd00:)/i.test(hostname)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Normalize URI to a clickable HTTP(S) URL
  * - ipfs:// URIs are converted to IPFS gateway URLs
  * - URIs without protocol are assumed to be HTTPS per BCMR spec
- * - http:// and https:// URIs are kept as-is
+ * - http:// and https:// URIs are validated for security
+ * SECURITY: Blocks internal/private addresses to prevent SSRF attacks
  */
 export function normalizeUri(uri: string): string {
   if (uri.startsWith('ipfs://')) {
@@ -657,13 +686,41 @@ export function normalizeUri(uri: string): string {
     return `https://ipfs.io/ipfs/${hash}`;
   }
 
-  // If URI already has a protocol, keep it as-is
+  // If URI already has a protocol
   if (uri.startsWith('https://') || uri.startsWith('http://')) {
-    return uri;
+    try {
+      const url = new URL(uri);
+
+      // SECURITY: Block internal/private hostnames
+      if (isInternalHostname(url.hostname)) {
+        throw new Error(`Internal/private hostnames not allowed: ${url.hostname}`);
+      }
+
+      // SECURITY: Only allow standard HTTP(S) ports or no port specified
+      if (url.port && !['', '80', '443'].includes(url.port)) {
+        throw new Error(`Non-standard ports not allowed: ${url.port}`);
+      }
+
+      return uri;
+    } catch (error) {
+      throw new Error(`Invalid or unsafe URI: ${error instanceof Error ? error.message : error}`);
+    }
   }
 
   // Per BCMR spec: URIs without protocol prefix assume HTTPS
-  return `https://${uri}`;
+  const httpsUri = `https://${uri}`;
+  try {
+    const url = new URL(httpsUri);
+
+    // SECURITY: Block internal/private hostnames
+    if (isInternalHostname(url.hostname)) {
+      throw new Error(`Internal/private hostnames not allowed: ${url.hostname}`);
+    }
+
+    return httpsUri;
+  } catch (error) {
+    throw new Error(`Invalid URI format: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 /**

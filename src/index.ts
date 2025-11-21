@@ -4,7 +4,7 @@
  * Console application to resolve, export, and fetch Bitcoin Cash Metadata Registries
  */
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, statSync } from 'fs';
 import { getBCMRRegistries, fetchAndValidateRegistry } from './lib/bcmr.js';
 import { closeConnectionPool } from './lib/fulcrum-client.js';
 import * as dotenv from 'dotenv';
@@ -44,6 +44,7 @@ function parseArgs(): {
   cidsFile: string;
   cashtokenCidsFile: string;
   jsonFolder: string;
+  maxFileSizeMB: number;
   useCache: boolean;
   clearCache: boolean;
   verbose: boolean;
@@ -61,6 +62,7 @@ function parseArgs(): {
   let cidsFile = 'bcmr-ipfs-cids.txt';
   let cashtokenCidsFile = 'cashtoken-ipfs-cids.txt';
   let jsonFolder = './bcmr-registries';
+  let maxFileSizeMB = 50; // Default: 50MB
   let useCache = true;
   let clearCache = false;
   let verbose = false;
@@ -134,6 +136,14 @@ function parseArgs(): {
       }
       concurrency = concurrencyValue;
       i++;
+    } else if (arg === '--max-file-size-mb') {
+      const maxSizeValue = parseInt(args[i + 1]);
+      if (isNaN(maxSizeValue) || maxSizeValue < 1 || maxSizeValue > 1000) {
+        console.error('Error: --max-file-size-mb must be a number between 1 and 1000');
+        process.exit(1);
+      }
+      maxFileSizeMB = maxSizeValue;
+      i++;
     } else if (arg === '--help' || arg === '-h') {
       showHelp = true;
     } else {
@@ -154,6 +164,7 @@ function parseArgs(): {
     cidsFile,
     cashtokenCidsFile,
     jsonFolder,
+    maxFileSizeMB,
     useCache,
     clearCache,
     verbose,
@@ -184,11 +195,12 @@ Options:
   --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
   --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
   --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
-  --no-cache                Disable authchain caching (force full resolution)
-  --clear-cache             Delete cache before running
-  --concurrency, -c <num>   Parallel query concurrency (1-200, default: 50)
-  --verbose, -v             Enable verbose logging for detailed diagnostics
-  --help, -h                Show this help message
+  --max-file-size-mb <num>      Max JSON file size in MB (1-1000, default: 50)
+  --no-cache                    Disable authchain caching (force full resolution)
+  --clear-cache                 Delete cache before running
+  --concurrency, -c <num>       Parallel query concurrency (1-200, default: 50)
+  --verbose, -v                 Enable verbose logging for detailed diagnostics
+  --help, -h                    Show this help message
 
 Workflow Examples:
 
@@ -248,7 +260,7 @@ function loadAuthheadFile(authheadFile: string): AuthheadRegistry[] {
 
   try {
     const fileContent = readFileSync(authheadFile, 'utf-8');
-    const data = JSON.parse(fileContent);
+    const data = sanitizeJSON(JSON.parse(fileContent));
 
     // Validate structure
     if (!Array.isArray(data)) {
@@ -309,9 +321,57 @@ function parseProtocolsFilter(protocolsStr: string): Set<'IPFS' | 'HTTPS' | 'OTH
 }
 
 /**
+ * Sanitize tokenId to prevent path traversal attacks
+ * TokenIds should be 64-character hex strings (transaction hashes)
+ * @throws Error if tokenId is invalid
+ */
+function sanitizeTokenId(tokenId: string): string {
+  // Only allow 64-character hex strings (SHA-256 transaction hashes)
+  if (!/^[a-fA-F0-9]{64}$/.test(tokenId)) {
+    throw new Error(`Invalid tokenId format: ${tokenId.substring(0, 20)}...`);
+  }
+  return tokenId;
+}
+
+/**
+ * Sanitize parsed JSON to prevent prototype pollution
+ * Removes dangerous keys like __proto__, constructor, prototype
+ * SECURITY: Prevents prototype pollution attacks from malicious JSON
+ */
+function sanitizeJSON(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeJSON);
+  }
+
+  // Remove dangerous keys
+  const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+  for (const key of dangerousKeys) {
+    delete obj[key];
+  }
+
+  // Recursively sanitize nested objects
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      if (dangerousKeys.includes(key)) {
+        delete obj[key];
+      } else {
+        obj[key] = sanitizeJSON(obj[key]);
+      }
+    }
+  }
+
+  return obj;
+}
+
+/**
  * Validate if a string is a valid IPFS CID (v0 or v1)
  * CIDv0: Qm[base58]{44} (exactly 46 chars)
  * CIDv1: [multibase-prefix][encoded-content] (e.g., b=base32, z=base58)
+ * SECURITY: Uses bounded quantifiers to prevent ReDoS attacks
  */
 function isValidIPFSCID(cid: string): boolean {
   // Remove any whitespace
@@ -330,25 +390,30 @@ function isValidIPFSCID(cid: string): boolean {
     );
   }
 
+  // Length check to prevent ReDoS attacks (CIDv1 typically 46-100 chars)
+  if (cid.length > 200) {
+    return false;
+  }
+
   // CIDv1: [multibase-prefix][encoded-content]
-  const cidv1Pattern = /^[bzBZmM][a-zA-Z0-9]+$/;
+  const cidv1Pattern = /^[bzBZmM][a-zA-Z0-9]{1,199}$/;
   if (cidv1Pattern.test(cid)) {
     const prefix = cid[0];
     const content = cid.slice(1);
 
     // Base32 variants (b, B)
     if (prefix === 'b' || prefix === 'B') {
-      return /^[a-z0-9]+$/.test(content) || /^[A-Z0-9]+$/.test(content);
+      return /^[a-z0-9]{1,199}$/.test(content) || /^[A-Z0-9]{1,199}$/.test(content);
     }
 
     // Base58 variants (z, Z)
     if (prefix === 'z' || prefix === 'Z') {
-      return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/.test(content);
+      return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,199}$/.test(content);
     }
 
     // Base64/Base64url (m, M)
     if (prefix === 'm' || prefix === 'M') {
-      return /^[A-Za-z0-9+/=\-_]+$/.test(content);
+      return /^[A-Za-z0-9+/=\-_]{1,199}$/.test(content);
     }
 
     return true; // Valid multibase prefix with valid characters
@@ -541,9 +606,26 @@ async function doExportIPFSCIDs(options: {
 /**
  * Recursively extract IPFS CIDs from a JSON structure
  * Traverses all strings, arrays, and objects looking for ipfs:// URIs
+ * SECURITY: Includes depth limiting and circular reference detection
  */
-function extractIPFSCIDsFromJSON(json: any, cids: Set<string>): void {
+function extractIPFSCIDsFromJSON(
+  json: any,
+  cids: Set<string>,
+  depth: number = 0,
+  visited: WeakSet<object> = new WeakSet()
+): void {
+  // Depth limit to prevent stack overflow
+  if (depth > 100) {
+    console.warn('Maximum recursion depth (100) reached, skipping deeper structures');
+    return;
+  }
+
   if (typeof json === 'string') {
+    // Limit string length to prevent memory issues
+    if (json.length > 10000) {
+      return;
+    }
+
     // Check if string starts with ipfs://
     if (json.startsWith('ipfs://')) {
       const cid = extractCIDFromURL(json);
@@ -552,14 +634,33 @@ function extractIPFSCIDsFromJSON(json: any, cids: Set<string>): void {
       }
     }
   } else if (Array.isArray(json)) {
+    // Limit array size to prevent memory/CPU exhaustion
+    if (json.length > 10000) {
+      console.warn(`Array too large (${json.length} items), skipping`);
+      return;
+    }
+
     // Traverse array elements
     for (const item of json) {
-      extractIPFSCIDsFromJSON(item, cids);
+      extractIPFSCIDsFromJSON(item, cids, depth + 1, visited);
     }
   } else if (typeof json === 'object' && json !== null) {
+    // Prevent circular references
+    if (visited.has(json)) {
+      return;
+    }
+    visited.add(json);
+
+    // Limit object size to prevent memory/CPU exhaustion
+    const keys = Object.keys(json);
+    if (keys.length > 10000) {
+      console.warn(`Object too large (${keys.length} keys), skipping`);
+      return;
+    }
+
     // Traverse object properties
     for (const value of Object.values(json)) {
-      extractIPFSCIDsFromJSON(value, cids);
+      extractIPFSCIDsFromJSON(value, cids, depth + 1, visited);
     }
   }
 }
@@ -570,8 +671,9 @@ function extractIPFSCIDsFromJSON(json: any, cids: Set<string>): void {
 async function doExportCashtokenIPFSCIDs(options: {
   jsonFolder: string;
   cashtokenCidsFile: string;
+  maxFileSizeMB: number;
 }): Promise<void> {
-  const { jsonFolder, cashtokenCidsFile } = options;
+  const { jsonFolder, cashtokenCidsFile, maxFileSizeMB } = options;
 
   // Check if folder exists
   if (!existsSync(jsonFolder)) {
@@ -604,8 +706,17 @@ async function doExportCashtokenIPFSCIDs(options: {
     const filePath = join(jsonFolder, file);
 
     try {
+      // Check file size before reading (security: prevent memory exhaustion)
+      const stats = statSync(filePath);
+      const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+      if (stats.size > maxFileSizeBytes) {
+        console.warn(`Warning: File ${file} too large (${(stats.size / 1024 / 1024).toFixed(2)}MB > ${maxFileSizeMB}MB), skipping`);
+        errorCount++;
+        continue;
+      }
+
       const fileContent = readFileSync(filePath, 'utf-8');
-      const json = JSON.parse(fileContent);
+      const json = sanitizeJSON(JSON.parse(fileContent));
 
       // Recursively extract IPFS CIDs from the JSON
       extractIPFSCIDsFromJSON(json, allCids);
@@ -675,7 +786,17 @@ async function doFetchJson(options: {
       console.log(`  Processing... ${i + 1}/${registries.length}`);
     }
 
-    const jsonPath = join(jsonFolder, `${registry.tokenId}.json`);
+    // SECURITY: Sanitize tokenId to prevent path traversal attacks
+    let safeTokenId: string;
+    try {
+      safeTokenId = sanitizeTokenId(registry.tokenId);
+    } catch (error) {
+      console.warn(`Skipping registry with invalid tokenId format: ${error instanceof Error ? error.message : error}`);
+      failedCount++;
+      continue;
+    }
+
+    const jsonPath = join(jsonFolder, `${safeTokenId}.json`);
     let registryJson = null;
 
     // Check if file already exists locally
@@ -686,15 +807,15 @@ async function doFetchJson(options: {
 
         if (computedHash === registry.hash) {
           // Hash matches, use existing file (skip network fetch)
-          registryJson = JSON.parse(fileContent);
+          registryJson = sanitizeJSON(JSON.parse(fileContent));
           skippedCount++;
         } else {
           // Hash mismatch, file is outdated or corrupted
-          console.warn(`Hash mismatch for ${registry.tokenId}, refetching...`);
+          console.warn(`Hash mismatch for ${safeTokenId}, refetching...`);
         }
       } catch (error) {
         // File exists but can't read/parse, will fetch from network
-        console.warn(`Error reading local file for ${registry.tokenId}, refetching...`);
+        console.warn(`Error reading local file for ${safeTokenId}, refetching...`);
       }
     }
 
@@ -802,6 +923,7 @@ async function main(): Promise<void> {
       await doExportCashtokenIPFSCIDs({
         jsonFolder: args.jsonFolder,
         cashtokenCidsFile: args.cashtokenCidsFile,
+        maxFileSizeMB: args.maxFileSizeMB,
       });
     }
 
