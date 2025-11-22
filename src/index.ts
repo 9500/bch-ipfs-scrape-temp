@@ -46,6 +46,7 @@ function parseArgs(): {
   cidsFile: string;
   cashtokenCidsFile: string;
   ipfsPinCidsFile: string | null;
+  ipfsPinConcurrency: number;
   jsonFolder: string;
   maxFileSizeMB: number;
   ipfsPinTimeout: number;
@@ -67,9 +68,10 @@ function parseArgs(): {
   let cidsFile = 'bcmr-ipfs-cids.txt';
   let cashtokenCidsFile = 'cashtoken-ipfs-cids.txt';
   let ipfsPinCidsFile: string | null = null; // null = pin both files by default
+  let ipfsPinConcurrency = 8; // Default: 8 concurrent pins
   let jsonFolder = './bcmr-registries';
   let maxFileSizeMB = 50; // Default: 50MB
-  let ipfsPinTimeout = 2; // Default: 2 seconds
+  let ipfsPinTimeout = 4; // Default: 4 seconds
   let useCache = true;
   let clearCache = false;
   let verbose = false;
@@ -139,6 +141,14 @@ function parseArgs(): {
       }
       ipfsPinTimeout = timeoutValue;
       i++;
+    } else if (arg === '--ipfs-pin-concurrency') {
+      const concurrencyValue = parseInt(args[i + 1]);
+      if (isNaN(concurrencyValue) || concurrencyValue < 1 || concurrencyValue > 200) {
+        console.error('Error: --ipfs-pin-concurrency must be a number between 1 and 200');
+        process.exit(1);
+      }
+      ipfsPinConcurrency = concurrencyValue;
+      i++;
     } else if (arg === '--json-folder') {
       jsonFolder = args[i + 1];
       if (!jsonFolder) {
@@ -189,6 +199,7 @@ function parseArgs(): {
     cidsFile,
     cashtokenCidsFile,
     ipfsPinCidsFile,
+    ipfsPinConcurrency,
     jsonFolder,
     maxFileSizeMB,
     ipfsPinTimeout,
@@ -216,6 +227,7 @@ Commands:
   --export-cashtoken-ipfs-cids  Extract IPFS CIDs from BCMR JSON files (deduplicated, sorted)
   --fetch-json                  Fetch BCMR JSON files from authhead.json
   --ipfs-pin                    Pin IPFS CIDs from both default files using local IPFS daemon
+                                (uses cache to skip already-pinned CIDs)
 
 Options:
   --authhead-file <path>        Path to authhead.json (default: ./authhead.json)
@@ -223,7 +235,8 @@ Options:
   --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
   --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
   --ipfs-pin-file <filename>    CIDs file to pin (default: both bcmr-ipfs-cids.txt and cashtoken-ipfs-cids.txt)
-  --ipfs-pin-timeout <seconds>  Timeout per CID in seconds (1-600, default: 2)
+  --ipfs-pin-timeout <seconds>  Timeout per CID in seconds (1-600, default: 4)
+  --ipfs-pin-concurrency <num>  Parallel pin concurrency (1-200, default: 8)
   --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --max-file-size-mb <num>      Max JSON file size in MB (1-1000, default: 50)
   --no-cache                    Disable authchain caching (force full resolution)
@@ -825,6 +838,26 @@ async function doIPFSPin(options: {
     console.log('Pinning from both default CID files...');
   }
 
+  // Load pin cache
+  const pinCacheFile = './bcmr-registries/.ipfs-pin-cache.json';
+  let pinnedCidsCache = new Set<string>();
+
+  if (existsSync(pinCacheFile)) {
+    try {
+      const cacheContent = readFileSync(pinCacheFile, 'utf-8');
+      const cacheData = JSON.parse(cacheContent);
+      if (Array.isArray(cacheData.pinnedCids)) {
+        pinnedCidsCache = new Set(cacheData.pinnedCids);
+        console.log(`Loaded pin cache: ${pinnedCidsCache.size} previously pinned CIDs`);
+      }
+    } catch (error) {
+      console.warn('Warning: Failed to load pin cache, will rebuild from scratch');
+    }
+  }
+
+  // Track newly pinned CIDs across all files
+  const newlyPinnedCids = new Set<string>();
+
   // Process each file
   for (const file of filesToPin) {
     // Check if CID file exists
@@ -846,17 +879,29 @@ async function doIPFSPin(options: {
     // Read and parse CIDs from file
     console.log(`\nReading IPFS CIDs from ${file}...`);
     const fileContent = readFileSync(file, 'utf-8');
-    const cids = fileContent
+    const allCids = fileContent
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0);
 
-    if (cids.length === 0) {
+    if (allCids.length === 0) {
       console.log(`No CIDs found in ${file}.`);
       continue;
     }
 
-    console.log(`Found ${cids.length} CIDs to pin from ${file}`);
+    // Filter out already cached CIDs
+    const cids = allCids.filter(cid => !pinnedCidsCache.has(cid));
+    const cachedCount = allCids.length - cids.length;
+
+    console.log(`Found ${allCids.length} CIDs in ${file}`);
+    if (cachedCount > 0) {
+      console.log(`  ${cachedCount} already pinned (cached), ${cids.length} to pin`);
+    }
+
+    if (cids.length === 0) {
+      console.log('All CIDs already pinned, skipping...');
+      continue;
+    }
 
     // Pin CIDs with parallel processing
     let pinnedCount = 0;
@@ -914,6 +959,9 @@ async function doIPFSPin(options: {
       // Update counters and log failures
       for (const result of results) {
         if (result.success) {
+          // Add to cache for successfully pinned CIDs
+          newlyPinnedCids.add(result.cid);
+
           if (result.alreadyPinned) {
             alreadyPinnedCount++;
             if (verbose) {
@@ -954,6 +1002,30 @@ async function doIPFSPin(options: {
     console.log(`  Already pinned: ${alreadyPinnedCount}`);
     console.log(`  Failed: ${failedCount}`);
     console.log(`  Total processed: ${cids.length}`);
+  }
+
+  // Save updated pin cache
+  if (newlyPinnedCids.size > 0) {
+    try {
+      // Merge new pins with existing cache
+      const allPinnedCids = new Set([...pinnedCidsCache, ...newlyPinnedCids]);
+      const cacheData = {
+        pinnedCids: Array.from(allPinnedCids).sort(),
+        lastUpdated: new Date().toISOString(),
+        totalCount: allPinnedCids.size,
+      };
+
+      // Ensure folder exists
+      const cacheDir = pinCacheFile.substring(0, pinCacheFile.lastIndexOf('/'));
+      if (!existsSync(cacheDir)) {
+        mkdirSync(cacheDir, { recursive: true });
+      }
+
+      writeFileSync(pinCacheFile, JSON.stringify(cacheData, null, 2), 'utf-8');
+      console.log(`\n✓ Saved pin cache: ${allPinnedCids.size} total pinned CIDs (${newlyPinnedCids.size} newly added)`);
+    } catch (error) {
+      console.warn('Warning: Failed to save pin cache:', error);
+    }
   }
 }
 
@@ -1145,7 +1217,7 @@ async function main(): Promise<void> {
       await doIPFSPin({
         cidsFile: args.ipfsPinCidsFile,
         verbose: args.verbose,
-        concurrency: args.concurrency,
+        concurrency: args.ipfsPinConcurrency,
         timeout: args.ipfsPinTimeout,
       });
     }

@@ -6,6 +6,7 @@ This document provides detailed technical information about the BCMR Registry To
 
 - [Project Structure](#project-structure)
 - [Authchain Caching](#authchain-caching)
+- [IPFS Pin Caching](#ipfs-pin-caching)
 - [Command Reference](#command-reference)
 - [Output Formats](#output-formats)
 - [Filtering Rules](#filtering-rules)
@@ -24,6 +25,7 @@ This document provides detailed technical information about the BCMR Registry To
 │       └── authchain-cache.ts    # Authchain caching logic
 ├── bcmr-registries/
 │   ├── .authchain-cache.json     # Authchain resolution cache (auto-generated)
+│   ├── .ipfs-pin-cache.json      # IPFS pin cache (auto-generated)
 │   └── *.json                    # Registry JSON files (with --fetch-json)
 ├── authhead.json                 # Resolved active registries (with --authchain-resolve)
 ├── exported-urls.txt             # Exported URLs (with --export)
@@ -105,6 +107,70 @@ Fulcrum Query Statistics:
   Average per registry: 0.51
 ```
 
+## IPFS Pin Caching
+
+### How It Works
+
+The tool automatically caches successfully pinned CIDs to avoid redundant pinning operations on subsequent runs.
+
+**Cache Location:** `bcmr-registries/.ipfs-pin-cache.json`
+
+**Benefits:**
+- **Skip already-pinned CIDs** - Dramatically speeds up subsequent pin operations
+- **Automatic cache management** - No manual intervention required
+- **Persistent across runs** - Cache survives restarts and updates
+
+### Cache Behavior
+
+**On Each Run:**
+1. Loads existing cache (if present)
+2. Filters out already-cached CIDs before processing
+3. Pins only new CIDs
+4. Updates cache with newly pinned CIDs
+5. Saves merged cache to disk
+
+**Cache Updates:**
+- Only successfully pinned CIDs are cached
+- Failed pins are NOT cached (will retry on next run)
+- Cache is saved after all files are processed
+- Atomic write ensures data integrity
+
+### Cache File Format
+
+JSON file containing:
+```json
+{
+  "pinnedCids": [
+    "QmVwdDCY4SPGVFnNCiZnX5CtzwWDn6kAM98JXzKxE3kCmn",
+    "bafyreihwqw6lsve7gkorqemerjrl3t5fjxpjdljbndto467zixmstw43aq",
+    ...
+  ],
+  "lastUpdated": "2025-01-15T12:34:56.789Z",
+  "totalCount": 1234
+}
+```
+
+**Fields:**
+- `pinnedCids` - Array of successfully pinned CID strings (sorted)
+- `lastUpdated` - ISO 8601 timestamp of last cache update
+- `totalCount` - Total number of cached CIDs
+
+### Manual Cache Management
+
+The pin cache is managed automatically, but you can manually manage it if needed:
+
+**View cache:**
+```bash
+cat bcmr-registries/.ipfs-pin-cache.json | jq '.totalCount'
+```
+
+**Clear cache:**
+```bash
+rm bcmr-registries/.ipfs-pin-cache.json
+```
+
+**Note:** Unlike authchain cache, there's no `--clear-pin-cache` flag. Simply delete the file to rebuild the cache from scratch.
+
 ## Command Reference
 
 ### Full Command List
@@ -116,7 +182,7 @@ Fulcrum Query Statistics:
 | `--export-bcmr-ipfs-cids` | Export IPFS CIDs from authhead.json | - | `--authhead-file`, `--cids-file` |
 | `--export-cashtoken-ipfs-cids` | Extract IPFS CIDs from BCMR JSON files | - | `--json-folder`, `--cashtoken-cids-file`, `--max-file-size-mb` |
 | `--fetch-json` | Fetch BCMR JSON files | - | `--authhead-file`, `--json-folder` |
-| `--ipfs-pin` | Pin IPFS CIDs from both default files using local IPFS daemon | - | `--ipfs-pin-file`, `--ipfs-pin-timeout`, `--concurrency`, `--verbose` |
+| `--ipfs-pin` | Pin IPFS CIDs from both default files using local IPFS daemon (uses cache to skip already-pinned CIDs) | - | `--ipfs-pin-file`, `--ipfs-pin-timeout`, `--ipfs-pin-concurrency`, `--verbose` |
 
 ### Options Reference
 
@@ -127,7 +193,8 @@ Fulcrum Query Statistics:
 | `--cids-file <filename>` | BCMR CIDs output filename | `bcmr-ipfs-cids.txt` | Any filename |
 | `--cashtoken-cids-file <file>` | CashToken CIDs output filename | `cashtoken-ipfs-cids.txt` | Any filename |
 | `--ipfs-pin-file <filename>` | CIDs file to pin | Both `bcmr-ipfs-cids.txt` and `cashtoken-ipfs-cids.txt` | Any filename |
-| `--ipfs-pin-timeout <seconds>` | Timeout per CID in seconds | `2` | 1-600 |
+| `--ipfs-pin-timeout <seconds>` | Timeout per CID in seconds | `4` | 1-600 |
+| `--ipfs-pin-concurrency <num>` | Parallel pin concurrency | `8` | 1-200 |
 | `--json-folder <path>` | Folder for cache and BCMR JSON | `./bcmr-registries` | Any directory |
 | `--max-file-size-mb <num>` | Max JSON file size in MB | `50` | 1-1000 |
 | `--no-cache` | Disable authchain caching | false | Flag (no value) |
