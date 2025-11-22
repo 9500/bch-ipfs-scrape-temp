@@ -513,15 +513,24 @@ async function doAuthchainResolve(options: {
 
   console.log(`\nFound ${registries.length} total registries`);
 
-  // Filter to active registries only (non-burned, valid, authhead unspent)
-  const activeRegistries = registries.filter(
-    (r) => !r.isBurned && r.isValid && r.isAuthheadUnspent
+  // Filter to current registries: both active (updatable) and burned (finalized)
+  // Exclude superseded registries (replaced by newer authchain updates)
+  const currentRegistries = registries.filter(
+    (r) => r.isValid && (r.isBurned || r.isAuthheadUnspent)
   );
 
-  console.log(`Active registries (non-burned, valid, authhead unspent): ${activeRegistries.length}`);
+  // Calculate breakdown
+  const activeCount = currentRegistries.filter(r => !r.isBurned && r.isAuthheadUnspent).length;
+  const burnedCount = currentRegistries.filter(r => r.isBurned).length;
+  const supersededCount = registries.filter(r => r.isValid && !r.isBurned && !r.isAuthheadUnspent).length;
+
+  console.log(`\nFiltered to ${currentRegistries.length} current registries (active + burned):`);
+  console.log(`  Active (updatable): ${activeCount}`);
+  console.log(`  Burned (finalized): ${burnedCount}`);
+  console.log(`  Excluded ${supersededCount} superseded registries`);
 
   // Convert to authhead.json format
-  const authheadData: AuthheadRegistry[] = activeRegistries.map((r) => ({
+  const authheadData: AuthheadRegistry[] = currentRegistries.map((r) => ({
     tokenId: r.tokenId,
     authbase: r.authbase,
     authhead: r.authhead,
@@ -538,7 +547,7 @@ async function doAuthchainResolve(options: {
   const jsonContent = JSON.stringify(authheadData, null, 2);
   writeFileSync(authheadFile, jsonContent, 'utf-8');
 
-  console.log(`\n✓ Saved ${activeRegistries.length} active registries to ${authheadFile}`);
+  console.log(`\n✓ Saved ${currentRegistries.length} current registries to ${authheadFile}`);
 }
 
 /**

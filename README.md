@@ -196,7 +196,7 @@ npm start -- --authchain-resolve \
 
 ## Output Files
 
-- `authhead.json` - Resolved active registries (created by `--authchain-resolve`)
+- `authhead.json` - Current registries: active + burned, excludes superseded (created by `--authchain-resolve`)
 - `exported-urls.txt` - Exported URLs (created by `--export`)
 - `bcmr-ipfs-cids.txt` - Exported IPFS CIDs from authhead.json (created by `--export-bcmr-ipfs-cids`)
 - `cashtoken-ipfs-cids.txt` - Exported IPFS CIDs from JSON files (created by `--export-cashtoken-ipfs-cids`)

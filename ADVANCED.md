@@ -27,7 +27,7 @@ This document provides detailed technical information about the BCMR Registry To
 │   ├── .authchain-cache.json     # Authchain resolution cache (auto-generated)
 │   ├── .ipfs-pin-cache.json      # IPFS pin cache (auto-generated)
 │   └── *.json                    # Registry JSON files (with --fetch-json)
-├── authhead.json                 # Resolved active registries (with --authchain-resolve)
+├── authhead.json                 # Current registries: active + burned (with --authchain-resolve)
 ├── exported-urls.txt             # Exported URLs (with --export)
 ├── bcmr-ipfs-cids.txt            # Exported IPFS CIDs (with --export-bcmr-ipfs-cids)
 ├── cashtoken-ipfs-cids.txt       # Exported CashToken IPFS CIDs (with --export-cashtoken-ipfs-cids)
@@ -298,13 +298,19 @@ Each file contains the validated BCMR registry data with hash verification.
 
 ## Filtering Rules
 
-### Active Registry Criteria
+### Current Registry Criteria
 
-`authhead.json` contains only registries that meet ALL criteria:
+`authhead.json` contains only current registries (excludes superseded ones):
 
-- ✅ Not burned (`isBurned === false`)
-- ✅ Valid (`isValid === true`, has URIs)
-- ✅ Active (`isActive === true`, authhead unspent)
+**Included:**
+- ✅ Valid (`isValid === true`, has URIs and proper format)
+- ✅ Either active OR burned:
+  - **Active** (`!isBurned && isAuthheadUnspent`): Can still be updated via authchain
+  - **Burned** (`isBurned`): Finalized/immutable, cannot be updated
+
+**Excluded:**
+- ❌ **Superseded** (`!isBurned && !isAuthheadUnspent`): Replaced by newer authchain update
+- ❌ **Invalid** (`!isValid`): Malformed or no URIs
 
 ### URL Protocol Filtering
 
