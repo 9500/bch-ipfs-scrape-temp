@@ -116,7 +116,7 @@ Fulcrum Query Statistics:
 | `--export-bcmr-ipfs-cids` | Export IPFS CIDs from authhead.json | - | `--authhead-file`, `--cids-file` |
 | `--export-cashtoken-ipfs-cids` | Extract IPFS CIDs from BCMR JSON files | - | `--json-folder`, `--cashtoken-cids-file`, `--max-file-size-mb` |
 | `--fetch-json` | Fetch BCMR JSON files | - | `--authhead-file`, `--json-folder` |
-| `--ipfs-pin` | Pin IPFS CIDs using local IPFS daemon | - | `--ipfs-pin-file`, `--ipfs-pin-timeout`, `--concurrency`, `--verbose` |
+| `--ipfs-pin` | Pin IPFS CIDs from both default files using local IPFS daemon | - | `--ipfs-pin-file`, `--ipfs-pin-timeout`, `--concurrency`, `--verbose` |
 
 ### Options Reference
 
@@ -126,7 +126,7 @@ Fulcrum Query Statistics:
 | `--export-file <filename>` | Export output filename | `exported-urls.txt` | Any filename |
 | `--cids-file <filename>` | BCMR CIDs output filename | `bcmr-ipfs-cids.txt` | Any filename |
 | `--cashtoken-cids-file <file>` | CashToken CIDs output filename | `cashtoken-ipfs-cids.txt` | Any filename |
-| `--ipfs-pin-file <filename>` | CIDs file to pin | `bcmr-ipfs-cids.txt` | Any filename |
+| `--ipfs-pin-file <filename>` | CIDs file to pin | Both `bcmr-ipfs-cids.txt` and `cashtoken-ipfs-cids.txt` | Any filename |
 | `--ipfs-pin-timeout <seconds>` | Timeout per CID in seconds | `2` | 1-600 |
 | `--json-folder <path>` | Folder for cache and BCMR JSON | `./bcmr-registries` | Any directory |
 | `--max-file-size-mb <num>` | Max JSON file size in MB | `50` | 1-1000 |

@@ -45,7 +45,7 @@ function parseArgs(): {
   exportFile: string;
   cidsFile: string;
   cashtokenCidsFile: string;
-  ipfsPinCidsFile: string;
+  ipfsPinCidsFile: string | null;
   jsonFolder: string;
   maxFileSizeMB: number;
   ipfsPinTimeout: number;
@@ -66,7 +66,7 @@ function parseArgs(): {
   let exportFile = 'exported-urls.txt';
   let cidsFile = 'bcmr-ipfs-cids.txt';
   let cashtokenCidsFile = 'cashtoken-ipfs-cids.txt';
-  let ipfsPinCidsFile = 'bcmr-ipfs-cids.txt';
+  let ipfsPinCidsFile: string | null = null; // null = pin both files by default
   let jsonFolder = './bcmr-registries';
   let maxFileSizeMB = 50; // Default: 50MB
   let ipfsPinTimeout = 2; // Default: 2 seconds
@@ -215,14 +215,14 @@ Commands:
   --export-bcmr-ipfs-cids       Export IPFS CIDs from authhead.json (deduplicated, sorted)
   --export-cashtoken-ipfs-cids  Extract IPFS CIDs from BCMR JSON files (deduplicated, sorted)
   --fetch-json                  Fetch BCMR JSON files from authhead.json
-  --ipfs-pin                    Pin IPFS CIDs using local IPFS daemon
+  --ipfs-pin                    Pin IPFS CIDs from both default files using local IPFS daemon
 
 Options:
   --authhead-file <path>        Path to authhead.json (default: ./authhead.json)
   --export-file <filename>      Export output filename (default: exported-urls.txt)
   --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
   --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
-  --ipfs-pin-file <filename>    CIDs file to pin (default: bcmr-ipfs-cids.txt)
+  --ipfs-pin-file <filename>    CIDs file to pin (default: both bcmr-ipfs-cids.txt and cashtoken-ipfs-cids.txt)
   --ipfs-pin-timeout <seconds>  Timeout per CID in seconds (1-600, default: 2)
   --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --max-file-size-mb <num>      Max JSON file size in MB (1-1000, default: 50)
@@ -252,16 +252,16 @@ Workflow Examples:
   6. Fetch BCMR JSON files:
      npm start -- --fetch-json
 
-  7. Pin IPFS CIDs using local IPFS daemon:
+  7. Pin IPFS CIDs using local IPFS daemon (pins from both CID files by default):
      npm start -- --ipfs-pin
-     npm start -- --ipfs-pin --ipfs-pin-file cashtoken-ipfs-cids.txt
+     npm start -- --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt  # pin only BCMR CIDs
      npm start -- --ipfs-pin --ipfs-pin-timeout 10
 
   8. Combined workflow (export and pin):
-     npm start -- --export-bcmr-ipfs-cids --ipfs-pin
+     npm start -- --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 
   9. Combined workflow (all in one):
-     npm start -- --authchain-resolve --export IPFS --export-bcmr-ipfs-cids --fetch-json
+     npm start -- --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 
   10. Custom authhead.json location:
       npm start -- --authchain-resolve --authhead-file ./data/authhead.json
@@ -788,7 +788,7 @@ async function doExportCashtokenIPFSCIDs(options: {
  * Command: Pin IPFS CIDs using local IPFS daemon
  */
 async function doIPFSPin(options: {
-  cidsFile: string;
+  cidsFile: string | null;
   verbose: boolean;
   concurrency: number;
   timeout: number;
@@ -817,126 +817,144 @@ async function doIPFSPin(options: {
     process.exit(1);
   }
 
-  // Check if CID file exists
-  if (!existsSync(cidsFile)) {
-    console.error(`Error: ${cidsFile} not found.`);
-    console.error('Please run one of these commands first:');
-    console.error('  npm start -- --export-bcmr-ipfs-cids');
-    console.error('  npm start -- --export-cashtoken-ipfs-cids');
-    process.exit(1);
+  // Determine which files to pin
+  const defaultFiles = ['bcmr-ipfs-cids.txt', 'cashtoken-ipfs-cids.txt'];
+  const filesToPin = cidsFile ? [cidsFile] : defaultFiles;
+
+  if (cidsFile === null) {
+    console.log('Pinning from both default CID files...');
   }
 
-  // Read and parse CIDs from file
-  console.log(`Reading IPFS CIDs from ${cidsFile}...`);
-  const fileContent = readFileSync(cidsFile, 'utf-8');
-  const cids = fileContent
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
-
-  if (cids.length === 0) {
-    console.log('No CIDs found in file.');
-    return;
-  }
-
-  console.log(`Found ${cids.length} CIDs to pin`);
-
-  // Pin CIDs with parallel processing
-  let pinnedCount = 0;
-  let alreadyPinnedCount = 0;
-  let failedCount = 0;
-  const startTime = Date.now();
-
-  // Process CIDs in batches with concurrency control
-  const processBatch = async (batch: string[]): Promise<void> => {
-    const results = await Promise.all(
-      batch.map(async (cid) => {
-        try {
-          return await new Promise<{ cid: string; success: boolean; alreadyPinned: boolean }>((resolve, reject) => {
-            const controller = new AbortController();
-            const proc = spawn('ipfs', ['pin', 'add', cid], {
-              timeout: timeout * 1000,  // Convert seconds to milliseconds
-              signal: controller.signal
-            });
-
-            let stdout = '';
-            let stderr = '';
-
-            proc.stdout.on('data', (data) => { stdout += data; });
-            proc.stderr.on('data', (data) => { stderr += data; });
-
-            proc.on('close', (code) => {
-              if (code === 0 || stdout.includes('recursive')) {
-                // Check if already pinned
-                const alreadyPinned = stdout.includes('already') || stderr.includes('already');
-                resolve({ cid, success: true, alreadyPinned });
-              } else {
-                reject(new Error(stderr.trim() || 'Unknown error'));
-              }
-            });
-
-            proc.on('error', (err) => {
-              if (err.name === 'AbortError') {
-                reject(new Error(`Timeout after ${timeout}s`));
-              } else {
-                reject(err);
-              }
-            });
-          });
-        } catch (error) {
-          return {
-            cid,
-            success: false,
-            alreadyPinned: false,
-            error: error instanceof Error ? error.message : String(error)
-          };
-        }
-      })
-    );
-
-    // Update counters and log failures
-    for (const result of results) {
-      if (result.success) {
-        if (result.alreadyPinned) {
-          alreadyPinnedCount++;
-          if (verbose) {
-            console.log(`  ${result.cid.substring(0, 12)}... already pinned`);
-          }
-        } else {
-          pinnedCount++;
-          if (verbose) {
-            console.log(`  ${result.cid.substring(0, 12)}... pinned`);
-          }
-        }
+  // Process each file
+  for (const file of filesToPin) {
+    // Check if CID file exists
+    if (!existsSync(file)) {
+      if (cidsFile) {
+        // If user specified a file, it's an error
+        console.error(`Error: ${file} not found.`);
+        console.error('Please run one of these commands first:');
+        console.error('  npm start -- --export-bcmr-ipfs-cids');
+        console.error('  npm start -- --export-cashtoken-ipfs-cids');
+        process.exit(1);
       } else {
-        failedCount++;
-        const errorMsg = 'error' in result ? result.error : 'Unknown error';
-        console.warn(`Warning: Failed to pin ${result.cid.substring(0, 12)}...: ${errorMsg}`);
+        // If using defaults, just skip missing files
+        console.log(`Skipping ${file} (not found)`);
+        continue;
       }
     }
-  };
 
-  // Process CIDs in batches
-  for (let i = 0; i < cids.length; i += concurrency) {
-    const batch = cids.slice(i, Math.min(i + concurrency, cids.length));
-    await processBatch(batch);
+    // Read and parse CIDs from file
+    console.log(`\nReading IPFS CIDs from ${file}...`);
+    const fileContent = readFileSync(file, 'utf-8');
+    const cids = fileContent
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
 
-    // Progress reporting
-    const processed = Math.min(i + concurrency, cids.length);
-    if (processed % 50 === 0 || processed === cids.length) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      const rate = ((processed / (Date.now() - startTime)) * 1000).toFixed(1);
-      console.log(`  Pinning CIDs... ${processed}/${cids.length} (${elapsed}s, ${rate} CIDs/s)`);
+    if (cids.length === 0) {
+      console.log(`No CIDs found in ${file}.`);
+      continue;
     }
-  }
 
-  // Summary report
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n✓ IPFS pinning complete in ${elapsed}s`);
-  console.log(`  Newly pinned: ${pinnedCount}`);
-  console.log(`  Already pinned: ${alreadyPinnedCount}`);
-  console.log(`  Failed: ${failedCount}`);
-  console.log(`  Total processed: ${cids.length}`);
+    console.log(`Found ${cids.length} CIDs to pin from ${file}`);
+
+    // Pin CIDs with parallel processing
+    let pinnedCount = 0;
+    let alreadyPinnedCount = 0;
+    let failedCount = 0;
+    const startTime = Date.now();
+
+    // Process CIDs in batches with concurrency control
+    const processBatch = async (batch: string[]): Promise<void> => {
+      const results = await Promise.all(
+        batch.map(async (cid) => {
+          try {
+            return await new Promise<{ cid: string; success: boolean; alreadyPinned: boolean }>((resolve, reject) => {
+              const controller = new AbortController();
+              const proc = spawn('ipfs', ['pin', 'add', cid], {
+                timeout: timeout * 1000,  // Convert seconds to milliseconds
+                signal: controller.signal
+              });
+
+              let stdout = '';
+              let stderr = '';
+
+              proc.stdout.on('data', (data) => { stdout += data; });
+              proc.stderr.on('data', (data) => { stderr += data; });
+
+              proc.on('close', (code) => {
+                if (code === 0 || stdout.includes('recursive')) {
+                  // Check if already pinned
+                  const alreadyPinned = stdout.includes('already') || stderr.includes('already');
+                  resolve({ cid, success: true, alreadyPinned });
+                } else {
+                  reject(new Error(stderr.trim() || 'Unknown error'));
+                }
+              });
+
+              proc.on('error', (err) => {
+                if (err.name === 'AbortError') {
+                  reject(new Error(`Timeout after ${timeout}s`));
+                } else {
+                  reject(err);
+                }
+              });
+            });
+          } catch (error) {
+            return {
+              cid,
+              success: false,
+              alreadyPinned: false,
+              error: error instanceof Error ? error.message : String(error)
+            };
+          }
+        })
+      );
+
+      // Update counters and log failures
+      for (const result of results) {
+        if (result.success) {
+          if (result.alreadyPinned) {
+            alreadyPinnedCount++;
+            if (verbose) {
+              console.log(`  ${result.cid.substring(0, 12)}... already pinned`);
+            }
+          } else {
+            pinnedCount++;
+            if (verbose) {
+              console.log(`  ${result.cid.substring(0, 12)}... pinned`);
+            }
+          }
+        } else {
+          failedCount++;
+          const errorMsg = 'error' in result ? result.error : 'Unknown error';
+          console.warn(`Warning: Failed to pin ${result.cid.substring(0, 12)}...: ${errorMsg}`);
+        }
+      }
+    };
+
+    // Process CIDs in batches
+    for (let i = 0; i < cids.length; i += concurrency) {
+      const batch = cids.slice(i, Math.min(i + concurrency, cids.length));
+      await processBatch(batch);
+
+      // Progress reporting
+      const processed = Math.min(i + concurrency, cids.length);
+      if (processed % 50 === 0 || processed === cids.length) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const rate = ((processed / (Date.now() - startTime)) * 1000).toFixed(1);
+        console.log(`  Pinning CIDs... ${processed}/${cids.length} (${elapsed}s, ${rate} CIDs/s)`);
+      }
+    }
+
+    // Summary report for this file
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`\n✓ IPFS pinning complete for ${file} in ${elapsed}s`);
+    console.log(`  Newly pinned: ${pinnedCount}`);
+    console.log(`  Already pinned: ${alreadyPinnedCount}`);
+    console.log(`  Failed: ${failedCount}`);
+    console.log(`  Total processed: ${cids.length}`);
+  }
 }
 
 /**

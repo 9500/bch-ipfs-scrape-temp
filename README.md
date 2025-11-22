@@ -52,9 +52,9 @@ npm start -- --fetch-json
 
 - **Authchain Resolution** - Follows spending chains from authbase to authhead
 - **URL Export** - Extract URLs from registries with protocol filtering (IPFS, HTTPS, OTHER, ALL)
-- **CID Export** - Extract and deduplicate IPFS CIDs
 - **JSON Fetching** - Download and validate registry JSON files with hash verification
-- **IPFS Pinning** - Pin CIDs using local IPFS daemon
+- **CID Export** - Extract and deduplicate IPFS CIDs from both registry metadata and JSON content
+- **IPFS Pinning** - Pin CIDs from both sources using local IPFS daemon
 - **Caching** - Automatically caches authchain resolution to speed up subsequent runs
 - **Parallel Processing** - Configurable concurrency for blockchain queries
 
