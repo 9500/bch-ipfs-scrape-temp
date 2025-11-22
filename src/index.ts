@@ -899,7 +899,13 @@ async function doIPFSPin(options: {
     }
 
     if (cids.length === 0) {
-      console.log('All CIDs already pinned, skipping...');
+      console.log('All CIDs already pinned (from cache), skipping IPFS operations...');
+      // Show summary for fully-cached file
+      console.log(`\n✓ IPFS pinning complete for ${file} (all from cache)`);
+      console.log(`  Newly pinned: 0`);
+      console.log(`  Already pinned: ${cachedCount} (${cachedCount} from cache)`);
+      console.log(`  Failed: 0`);
+      console.log(`  Total: ${allCids.length}`);
       continue;
     }
 
@@ -997,11 +1003,17 @@ async function doIPFSPin(options: {
 
     // Summary report for this file
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const totalAlreadyPinned = cachedCount + alreadyPinnedCount;
+
     console.log(`\n✓ IPFS pinning complete for ${file} in ${elapsed}s`);
     console.log(`  Newly pinned: ${pinnedCount}`);
-    console.log(`  Already pinned: ${alreadyPinnedCount}`);
+    if (cachedCount > 0) {
+      console.log(`  Already pinned: ${totalAlreadyPinned} (${cachedCount} from cache)`);
+    } else {
+      console.log(`  Already pinned: ${alreadyPinnedCount}`);
+    }
     console.log(`  Failed: ${failedCount}`);
-    console.log(`  Total processed: ${cids.length}`);
+    console.log(`  Total: ${allCids.length}`);
   }
 
   // Save updated pin cache
