@@ -193,8 +193,8 @@ rm bcmr-registries/.ipfs-pin-cache.json
 | `--cids-file <filename>` | BCMR CIDs output filename | `bcmr-ipfs-cids.txt` | Any filename |
 | `--cashtoken-cids-file <file>` | CashToken CIDs output filename | `cashtoken-ipfs-cids.txt` | Any filename |
 | `--ipfs-pin-file <filename>` | CIDs file to pin | Both `bcmr-ipfs-cids.txt` and `cashtoken-ipfs-cids.txt` | Any filename |
-| `--ipfs-pin-timeout <seconds>` | Timeout per CID in seconds | `4` | 1-600 |
-| `--ipfs-pin-concurrency <num>` | Parallel pin concurrency | `8` | 1-200 |
+| `--ipfs-pin-timeout <seconds>` | Timeout per CID in seconds | `5` | 1-600 |
+| `--ipfs-pin-concurrency <num>` | Parallel pin concurrency | `5` | 1-200 |
 | `--json-folder <path>` | Folder for cache and BCMR JSON | `./bcmr-registries` | Any directory |
 | `--max-file-size-mb <num>` | Max JSON file size in MB | `50` | 1-1000 |
 | `--no-cache` | Disable authchain caching | false | Flag (no value) |

@@ -68,10 +68,10 @@ function parseArgs(): {
   let cidsFile = 'bcmr-ipfs-cids.txt';
   let cashtokenCidsFile = 'cashtoken-ipfs-cids.txt';
   let ipfsPinCidsFile: string | null = null; // null = pin both files by default
-  let ipfsPinConcurrency = 8; // Default: 8 concurrent pins
+  let ipfsPinConcurrency = 5; // Default: 5 concurrent pins
   let jsonFolder = './bcmr-registries';
   let maxFileSizeMB = 50; // Default: 50MB
-  let ipfsPinTimeout = 4; // Default: 4 seconds
+  let ipfsPinTimeout = 5; // Default: 5 seconds
   let useCache = true;
   let clearCache = false;
   let verbose = false;
@@ -235,8 +235,8 @@ Options:
   --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
   --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
   --ipfs-pin-file <filename>    CIDs file to pin (default: both bcmr-ipfs-cids.txt and cashtoken-ipfs-cids.txt)
-  --ipfs-pin-timeout <seconds>  Timeout per CID in seconds (1-600, default: 4)
-  --ipfs-pin-concurrency <num>  Parallel pin concurrency (1-200, default: 8)
+  --ipfs-pin-timeout <seconds>  Timeout per CID in seconds (1-600, default: 5)
+  --ipfs-pin-concurrency <num>  Parallel pin concurrency (1-200, default: 5)
   --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --max-file-size-mb <num>      Max JSON file size in MB (1-1000, default: 50)
   --no-cache                    Disable authchain caching (force full resolution)

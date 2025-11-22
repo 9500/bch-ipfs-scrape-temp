@@ -115,17 +115,17 @@ npm start -- --fetch-json
 
 ### Pin IPFS CIDs
 
-Pin CIDs using local IPFS daemon:
+Pin CIDs using local IPFS daemon (uses cache to skip already-pinned CIDs):
 
 ```bash
-# Pin CIDs from default file (bcmr-ipfs-cids.txt)
+# Pin from both default files (bcmr-ipfs-cids.txt and cashtoken-ipfs-cids.txt)
 npm start -- --ipfs-pin
 
-# Pin CIDs from custom file
-npm start -- --ipfs-pin --ipfs-pin-file cashtoken-ipfs-cids.txt
+# Pin CIDs from a single file
+npm start -- --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt
 
-# Custom timeout (default: 2 seconds)
-npm start -- --ipfs-pin --ipfs-pin-timeout 10
+# Custom timeout and concurrency (defaults: 5s timeout, 5 concurrent pins)
+npm start -- --ipfs-pin --ipfs-pin-timeout 10 --ipfs-pin-concurrency 10
 ```
 
 Bash script alternative for sequential pinning:
@@ -137,26 +137,45 @@ Bash script alternative for sequential pinning:
 
 ## Common Workflows
 
-### Complete Workflow
+### Complete Workflow (Recommended)
 
-Resolve, export, and fetch in one command:
+Resolve authchains, fetch JSON, export CIDs, and pin everything to IPFS:
 
 ```bash
-npm start -- --authchain-resolve --export IPFS --export-bcmr-ipfs-cids --fetch-json
+npm start -- --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 ```
+
+This command:
+1. Resolves authchains from blockchain data
+2. Fetches and validates BCMR JSON files
+3. Exports IPFS CIDs from registry metadata
+4. Exports IPFS CIDs from JSON file contents
+5. Pins all CIDs to local IPFS daemon (automatically skips already-pinned CIDs using cache)
 
 ### Update Existing Data
 
-Use caching to quickly update:
+Use caching to quickly update (subsequent runs are much faster):
 
 ```bash
-npm start -- --authchain-resolve --export IPFS
+npm start -- --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 ```
+
+Cached components:
+- Authchains (only queries new/changed chains)
+- IPFS pins (skips already-pinned CIDs)
 
 ### Export and Pin CIDs
 
+Export and pin from both sources (pins both files by default):
+
 ```bash
-npm start -- --export-bcmr-ipfs-cids --ipfs-pin
+npm start -- --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
+```
+
+Pin from a single file:
+
+```bash
+npm start -- --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt
 ```
 
 ### Custom Output Files
@@ -175,6 +194,7 @@ npm start -- --authchain-resolve \
 - `cashtoken-ipfs-cids.txt` - Exported IPFS CIDs from JSON files (created by `--export-cashtoken-ipfs-cids`)
 - `bcmr-registries/*.json` - Downloaded registry JSON files (created by `--fetch-json`)
 - `bcmr-registries/.authchain-cache.json` - Authchain cache (auto-generated)
+- `bcmr-registries/.ipfs-pin-cache.json` - IPFS pin cache (auto-generated)
 
 ## Requirements
 
