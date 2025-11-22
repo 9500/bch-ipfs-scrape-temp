@@ -48,6 +48,7 @@ function parseArgs(): {
   ipfsPinCidsFile: string;
   jsonFolder: string;
   maxFileSizeMB: number;
+  ipfsPinTimeout: number;
   useCache: boolean;
   clearCache: boolean;
   verbose: boolean;
@@ -68,6 +69,7 @@ function parseArgs(): {
   let ipfsPinCidsFile = 'bcmr-ipfs-cids.txt';
   let jsonFolder = './bcmr-registries';
   let maxFileSizeMB = 50; // Default: 50MB
+  let ipfsPinTimeout = 2; // Default: 2 seconds
   let useCache = true;
   let clearCache = false;
   let verbose = false;
@@ -129,6 +131,14 @@ function parseArgs(): {
         process.exit(1);
       }
       i++;
+    } else if (arg === '--ipfs-pin-timeout') {
+      const timeoutValue = parseInt(args[i + 1]);
+      if (isNaN(timeoutValue) || timeoutValue < 1 || timeoutValue > 600) {
+        console.error('Error: --ipfs-pin-timeout must be a number between 1 and 600 seconds');
+        process.exit(1);
+      }
+      ipfsPinTimeout = timeoutValue;
+      i++;
     } else if (arg === '--json-folder') {
       jsonFolder = args[i + 1];
       if (!jsonFolder) {
@@ -181,6 +191,7 @@ function parseArgs(): {
     ipfsPinCidsFile,
     jsonFolder,
     maxFileSizeMB,
+    ipfsPinTimeout,
     useCache,
     clearCache,
     verbose,
@@ -212,6 +223,7 @@ Options:
   --cids-file <filename>        BCMR CIDs output filename (default: bcmr-ipfs-cids.txt)
   --cashtoken-cids-file <file>  Cashtoken CIDs output filename (default: cashtoken-ipfs-cids.txt)
   --ipfs-pin-file <filename>    CIDs file to pin (default: bcmr-ipfs-cids.txt)
+  --ipfs-pin-timeout <seconds>  Timeout per CID in seconds (1-600, default: 2)
   --json-folder <path>          Folder for cache and BCMR JSON (default: ./bcmr-registries)
   --max-file-size-mb <num>      Max JSON file size in MB (1-1000, default: 50)
   --no-cache                    Disable authchain caching (force full resolution)
@@ -243,6 +255,7 @@ Workflow Examples:
   7. Pin IPFS CIDs using local IPFS daemon:
      npm start -- --ipfs-pin
      npm start -- --ipfs-pin --ipfs-pin-file cashtoken-ipfs-cids.txt
+     npm start -- --ipfs-pin --ipfs-pin-timeout 10
 
   8. Combined workflow (export and pin):
      npm start -- --export-bcmr-ipfs-cids --ipfs-pin
@@ -782,8 +795,9 @@ async function doIPFSPin(options: {
   cidsFile: string;
   verbose: boolean;
   concurrency: number;
+  timeout: number;
 }): Promise<void> {
-  const { cidsFile, verbose, concurrency } = options;
+  const { cidsFile, verbose, concurrency, timeout } = options;
 
   // Check if ipfs command exists
   console.log('Checking IPFS CLI availability...');
@@ -843,7 +857,11 @@ async function doIPFSPin(options: {
       batch.map(async (cid) => {
         try {
           return await new Promise<{ cid: string; success: boolean; alreadyPinned: boolean }>((resolve, reject) => {
-            const proc = spawn('ipfs', ['pin', 'add', cid]);
+            const controller = new AbortController();
+            const proc = spawn('ipfs', ['pin', 'add', cid], {
+              timeout: timeout * 1000,  // Convert seconds to milliseconds
+              signal: controller.signal
+            });
 
             let stdout = '';
             let stderr = '';
@@ -862,7 +880,11 @@ async function doIPFSPin(options: {
             });
 
             proc.on('error', (err) => {
-              reject(err);
+              if (err.name === 'AbortError') {
+                reject(new Error(`Timeout after ${timeout}s`));
+              } else {
+                reject(err);
+              }
             });
           });
         } catch (error) {
@@ -1110,6 +1132,7 @@ async function main(): Promise<void> {
         cidsFile: args.ipfsPinCidsFile,
         verbose: args.verbose,
         concurrency: args.concurrency,
+        timeout: args.ipfsPinTimeout,
       });
     }
 
