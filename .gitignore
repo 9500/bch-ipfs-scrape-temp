@@ -29,5 +29,8 @@ bcmr-registries/
 authhead.json
 exported-urls.txt
 bcmr-ipfs-cids.txt
+cashtoken-ipfs-cids.txt
 bcmr-ipfs-links.txt
+all-urls.txt
+https-urls.txt
 *.json.txt

@@ -11,6 +11,7 @@ import * as dotenv from 'dotenv';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { execSync, spawn } from 'child_process';
+import { CID } from 'multiformats/cid';
 
 // Load environment variables
 dotenv.config();
@@ -416,9 +417,7 @@ function sanitizeJSON(obj: any): any {
 
 /**
  * Validate if a string is a valid IPFS CID (v0 or v1)
- * CIDv0: Qm[base58]{44} (exactly 46 chars)
- * CIDv1: [multibase-prefix][encoded-content] (e.g., b=base32, z=base58)
- * SECURITY: Uses bounded quantifiers to prevent ReDoS attacks
+ * Uses multiformats library for accurate validation
  */
 function isValidIPFSCID(cid: string): boolean {
   // Remove any whitespace
@@ -429,62 +428,66 @@ function isValidIPFSCID(cid: string): boolean {
     return false;
   }
 
-  // CIDv0: Qm[base58]{44}
-  if (cid.startsWith('Qm')) {
-    return (
-      cid.length === 46 &&
-      /^Qm[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{44}$/.test(cid)
-    );
-  }
-
-  // Length check to prevent ReDoS attacks (CIDv1 typically 46-100 chars)
-  if (cid.length > 200) {
+  // Use multiformats library to validate CID
+  try {
+    CID.parse(cid);
+    return true;
+  } catch {
     return false;
   }
-
-  // CIDv1: [multibase-prefix][encoded-content]
-  const cidv1Pattern = /^[bzBZmM][a-zA-Z0-9]{1,199}$/;
-  if (cidv1Pattern.test(cid)) {
-    const prefix = cid[0];
-    const content = cid.slice(1);
-
-    // Base32 variants (b, B)
-    if (prefix === 'b' || prefix === 'B') {
-      return /^[a-z0-9]{1,199}$/.test(content) || /^[A-Z0-9]{1,199}$/.test(content);
-    }
-
-    // Base58 variants (z, Z)
-    if (prefix === 'z' || prefix === 'Z') {
-      return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,199}$/.test(content);
-    }
-
-    // Base64/Base64url (m, M)
-    if (prefix === 'm' || prefix === 'M') {
-      return /^[A-Za-z0-9+/=\-_]{1,199}$/.test(content);
-    }
-
-    return true; // Valid multibase prefix with valid characters
-  }
-
-  return false;
 }
 
 /**
- * Extract CID from ipfs:// URL (removes path components)
- * Example: ipfs://Qm.../path/file.json -> Qm...
+ * Extract CIDs from URL (ipfs:// scheme or HTTPS gateway URLs)
+ * Supports:
+ * - ipfs://CID/path -> [CID]
+ * - https://gateway.com/ipfs/CID/path -> [CID]
+ * - https://CID.ipfs.gateway.com/path -> [CID]
+ * Skips IPNS URLs (returns empty array)
  */
-function extractCIDFromURL(url: string): string | null {
+function extractCIDsFromURL(url: string): string[] {
+  const cids: string[] = [];
+
   try {
+    // Skip IPNS URLs (we only want IPFS CIDs)
+    if (url.includes('/ipns/') || url.includes('.ipns.')) {
+      return [];
+    }
+
     // Handle ipfs:// scheme
     if (url.startsWith('ipfs://')) {
       const cidPart = url.substring(7).split('/')[0];
-      return cidPart.length > 0 ? cidPart : null;
+      if (cidPart.length > 0 && isValidIPFSCID(cidPart)) {
+        cids.push(cidPart);
+      }
+      return cids;
+    }
+
+    // Handle HTTPS gateway URLs
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      // Path-style: https://gateway.com/ipfs/CID/path
+      const pathMatch = url.match(/\/ipfs\/([^/?#]+)/);
+      if (pathMatch && pathMatch[1]) {
+        const cidPart = pathMatch[1];
+        if (isValidIPFSCID(cidPart)) {
+          cids.push(cidPart);
+        }
+      }
+
+      // Subdomain-style: https://CID.ipfs.gateway.com/path
+      const subdomainMatch = url.match(/^https?:\/\/([^./]+)\.ipfs\./);
+      if (subdomainMatch && subdomainMatch[1]) {
+        const cidPart = subdomainMatch[1];
+        if (isValidIPFSCID(cidPart)) {
+          cids.push(cidPart);
+        }
+      }
     }
   } catch {
-    // URL parsing failed
+    // URL parsing failed, return empty array
   }
 
-  return null;
+  return cids;
 }
 
 /**
@@ -601,26 +604,31 @@ async function doExportIPFSCIDs(options: {
 
   // Extract IPFS CIDs
   const cids: string[] = [];
-  let invalidCount = 0;
+  let ipfsUrlCount = 0;
+  let gatewayUrlCount = 0;
+  let skippedIpnsCount = 0;
 
   for (const registry of registries) {
     for (const uri of registry.uris) {
-      // Only process IPFS URLs
-      if (classifyUrlProtocol(uri) === 'IPFS') {
-        // Extract CID from URL (removes path components)
-        const cid = extractCIDFromURL(uri);
+      const protocol = classifyUrlProtocol(uri);
 
-        if (cid) {
-          // Validate CID
-          if (isValidIPFSCID(cid)) {
-            cids.push(cid);
+      // Process IPFS URLs and HTTPS URLs (may contain gateway URLs)
+      if (protocol === 'IPFS' || protocol === 'HTTPS') {
+        // Extract CIDs from URL (handles ipfs://, gateway path-style, and subdomain-style)
+        const extractedCids = extractCIDsFromURL(uri);
+
+        if (extractedCids.length > 0) {
+          // Track source type
+          if (protocol === 'IPFS') {
+            ipfsUrlCount++;
           } else {
-            console.warn(`Warning: Invalid CID format in URL: ${uri}`);
-            invalidCount++;
+            gatewayUrlCount++;
           }
-        } else {
-          console.warn(`Warning: Failed to extract CID from URL: ${uri}`);
-          invalidCount++;
+
+          cids.push(...extractedCids);
+        } else if (uri.includes('/ipns/') || uri.includes('.ipns.')) {
+          // Track skipped IPNS URLs
+          skippedIpnsCount++;
         }
       }
     }
@@ -628,6 +636,9 @@ async function doExportIPFSCIDs(options: {
 
   if (cids.length === 0) {
     console.log('No valid IPFS CIDs found.');
+    if (skippedIpnsCount > 0) {
+      console.log(`  Skipped ${skippedIpnsCount} IPNS URLs (not CID-based)`);
+    }
     return;
   }
 
@@ -645,14 +656,16 @@ async function doExportIPFSCIDs(options: {
   console.log(`  Total CIDs found: ${cids.length}`);
   console.log(`  Unique CIDs: ${uniqueCids.length}`);
   console.log(`  Duplicates removed: ${cids.length - uniqueCids.length}`);
-  if (invalidCount > 0) {
-    console.log(`  Invalid CIDs skipped: ${invalidCount}`);
+  console.log(`  From ipfs:// URLs: ${ipfsUrlCount}`);
+  console.log(`  From gateway URLs: ${gatewayUrlCount}`);
+  if (skippedIpnsCount > 0) {
+    console.log(`  Skipped IPNS URLs: ${skippedIpnsCount}`);
   }
 }
 
 /**
  * Recursively extract IPFS CIDs from a JSON structure
- * Traverses all strings, arrays, and objects looking for ipfs:// URIs
+ * Traverses all strings, arrays, and objects looking for ipfs:// URIs and HTTPS gateway URLs
  * SECURITY: Includes depth limiting and circular reference detection
  */
 function extractIPFSCIDsFromJSON(
@@ -673,10 +686,10 @@ function extractIPFSCIDsFromJSON(
       return;
     }
 
-    // Check if string starts with ipfs://
-    if (json.startsWith('ipfs://')) {
-      const cid = extractCIDFromURL(json);
-      if (cid && isValidIPFSCID(cid)) {
+    // Check if string contains IPFS CIDs (ipfs:// or HTTPS gateway URLs)
+    if (json.startsWith('ipfs://') || json.startsWith('http://') || json.startsWith('https://')) {
+      const extractedCids = extractCIDsFromURL(json);
+      for (const cid of extractedCids) {
         cids.add(cid);
       }
     }

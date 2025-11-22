@@ -53,7 +53,7 @@ npm start -- --fetch-json
 - **Authchain Resolution** - Follows spending chains from authbase to authhead
 - **URL Export** - Extract URLs from registries with protocol filtering (IPFS, HTTPS, OTHER, ALL)
 - **JSON Fetching** - Download and validate registry JSON files with hash verification
-- **CID Export** - Extract and deduplicate IPFS CIDs from both registry metadata and JSON content
+- **CID Export** - Extract and deduplicate IPFS CIDs from both registry metadata and JSON content (supports ipfs:// URLs and HTTPS gateway URLs)
 - **IPFS Pinning** - Pin CIDs from both sources using local IPFS daemon
 - **Caching** - Automatically caches authchain resolution to speed up subsequent runs
 - **Parallel Processing** - Configurable concurrency for blockchain queries
@@ -97,6 +97,12 @@ Extract only IPFS CIDs (deduplicated and sorted):
 npm start -- --export-bcmr-ipfs-cids
 ```
 
+This extracts CIDs from:
+- `ipfs://` URLs (e.g., `ipfs://QmHash/path`)
+- HTTPS gateway URLs in path style (e.g., `https://ipfs.tapswap.cash/ipfs/QmHash/file.json`)
+- HTTPS gateway URLs in subdomain style (e.g., `https://QmHash.ipfs.dweb.link/file.json`)
+- IPNS URLs are automatically skipped
+
 ### Export CashToken IPFS CIDs
 
 Extract IPFS CIDs from BCMR JSON files:
@@ -104,6 +110,8 @@ Extract IPFS CIDs from BCMR JSON files:
 ```bash
 npm start -- --export-cashtoken-ipfs-cids
 ```
+
+This recursively scans all BCMR JSON files and extracts CIDs from both `ipfs://` URLs and HTTPS gateway URLs.
 
 ### Fetch JSON Files
 
