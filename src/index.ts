@@ -277,12 +277,8 @@ Environment Variables:
   CHAINGRAPH_URL    GraphQL endpoint for Chaingraph (required)
   FULCRUM_WS_URL    Fulcrum WebSocket endpoint for authchain resolution (required)
 
-Performance:
-  Parallel processing with connection pooling provides ~10-20x speedup.
-  First run: ~30-60 seconds (builds cache, concurrency 50)
-  Subsequent runs: ~20-40 seconds (uses cache for inactive chains)
-
-  Adjust --concurrency (1-200) to balance performance vs server load.
+Notes:
+  Adjust --concurrency (1-200) to balance server load.
   Use --verbose to see detailed cache hit/miss information per registry.
 `);
 }

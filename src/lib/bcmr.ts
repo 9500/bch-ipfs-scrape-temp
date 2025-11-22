@@ -219,7 +219,7 @@ function isOutputBurned(output: BCMROutput): boolean {
 }
 
 /**
- * Result from authchain resolution with performance metrics
+ * Result from authchain resolution with cache statistics
  */
 interface AuthchainResolutionResult {
   entry: AuthchainCacheEntry;
@@ -620,15 +620,6 @@ export async function getBCMRRegistries(options?: {
       console.log('\nFulcrum Query Statistics:');
       console.log(`  Total queries: ${totalFulcrumQueries}`);
       console.log(`  Average per registry: ${(totalFulcrumQueries / validOutputs.length).toFixed(2)}`);
-
-      // Estimate query savings
-      if (totalHits > 0) {
-        // Assume average authchain length of 2 for missed registries
-        const estimatedQueriesWithoutCache = cacheMisses * 2 + totalHits * 2;
-        const queriesSaved = estimatedQueriesWithoutCache - totalFulcrumQueries;
-        const percentSaved = ((queriesSaved / estimatedQueriesWithoutCache) * 100).toFixed(1);
-        console.log(`  Estimated queries saved: ${queriesSaved} (~${percentSaved}% reduction)`);
-      }
 
       // Save cache (atomic - only if we got here successfully)
       saveAuthchainCache(newCache, cachePath);
