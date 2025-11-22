@@ -3,7 +3,7 @@
  * Fetches and parses BCMR registry announcements from the BCH blockchain
  */
 
-import { getOutputSpendingTx } from './fulcrum-client.js';
+import { getOutputSpendingTx, getTransaction } from './fulcrum-client.js';
 import { createHash } from 'crypto';
 import type { AuthchainCache, AuthchainCacheEntry } from './authchain-cache.js';
 import {
@@ -82,7 +82,7 @@ interface ParsedBCMR {
 interface BCMRRegistry {
   authbase: string; // Transaction hash where authchain starts
   authhead: string; // Latest transaction in authchain
-  tokenId: string;  // Same as authbase for display
+  tokenId: string;  // Parent transaction ID of authbase (CashToken category ID)
   blockHeight: number;
   hash: string;
   uris: string[];
@@ -216,6 +216,29 @@ function isOutputBurned(output: BCMROutput): boolean {
   // For simplicity, we check if this output is at index 0 and is OP_RETURN
   const outputIndex = parseInt(String(output.output_index));
   return outputIndex === 0;
+}
+
+/**
+ * Get the parent transaction ID of a given transaction
+ * Returns the txid of the first input (vin[0].txid)
+ * This is the CashToken category ID for genesis transactions
+ * @param txid - Transaction hash to get parent of
+ * @returns Parent transaction ID, or null if cannot be determined
+ */
+async function getParentTxId(txid: string): Promise<string | null> {
+  try {
+    const tx = await getTransaction(txid);
+
+    // Return first input's txid (parent transaction)
+    if (tx.vin && tx.vin.length > 0 && tx.vin[0].txid) {
+      return tx.vin[0].txid;
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Failed to get parent txid for ${txid}:`, error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 /**
@@ -501,6 +524,15 @@ export async function getBCMRRegistries(options?: {
       // Strip hex prefix from transaction hash
       const txHash = stripHexPrefix(output.transaction_hash);
 
+      // Get parent transaction ID (CashToken category ID)
+      const parentTxId = await getParentTxId(txHash);
+      if (!parentTxId) {
+        if (verbose) {
+          console.warn(`Warning: Could not resolve parent txid for authbase ${txHash}, skipping registry`);
+        }
+        return null; // Skip this registry
+      }
+
       // Resolve authchain with caching
       const authchainResult = await resolveAuthchain(txHash, oldCache);
 
@@ -515,7 +547,7 @@ export async function getBCMRRegistries(options?: {
       return {
         authbase: txHash,
         authhead: authchainResult.entry.authhead,
-        tokenId: txHash,
+        tokenId: parentTxId,
         blockHeight,
         hash: parsed.hash,
         uris: parsed.uris,
