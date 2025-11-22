@@ -1063,7 +1063,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // Execute commands in order: resolve -> export -> fetch
+    // Execute commands in order: resolve -> fetch -> export -> pin
     if (args.authchainResolve) {
       await doAuthchainResolve({
         authheadFile: args.authheadFile,
@@ -1072,6 +1072,13 @@ async function main(): Promise<void> {
         clearCache: args.clearCache,
         verbose: args.verbose,
         concurrency: args.concurrency,
+      });
+    }
+
+    if (args.fetchJson) {
+      await doFetchJson({
+        authheadFile: args.authheadFile,
+        jsonFolder: args.jsonFolder,
       });
     }
 
@@ -1095,13 +1102,6 @@ async function main(): Promise<void> {
         jsonFolder: args.jsonFolder,
         cashtokenCidsFile: args.cashtokenCidsFile,
         maxFileSizeMB: args.maxFileSizeMB,
-      });
-    }
-
-    if (args.fetchJson) {
-      await doFetchJson({
-        authheadFile: args.authheadFile,
-        jsonFolder: args.jsonFolder,
       });
     }
 
