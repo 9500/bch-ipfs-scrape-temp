@@ -1,6 +1,6 @@
-# BCMR Registry Tool
+# BCH IPFS BCMR Registry Scraping Tool
 
-A Node.js tool for resolving, exporting, and fetching Bitcoin Cash Metadata Registry (BCMR) data from the blockchain.
+A Node.js tool for resolving, exporting, and fetching Bitcoin Cash Metadata Registry (BCMR) and NFT data from the blockchain.
 
 ## What is BCMR?
 
