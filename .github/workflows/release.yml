@@ -25,15 +25,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build TypeScript
-        run: npm run build
+      - name: Bundle with esbuild
+        run: npm run bundle
 
       - name: Create bin directory
         run: mkdir -p bin
 
       - name: Create binaries with pkg
         run: |
-          npx pkg dist/index.js \
+          npx pkg dist/bundled.cjs \
             --targets node18-linux-x64,node18-linux-arm64 \
             --compress GZip \
             --output bin/bch-ipfs-scrape
