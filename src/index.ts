@@ -13,6 +13,17 @@ import { createHash } from 'crypto';
 import { execSync, spawn } from 'child_process';
 import { CID } from 'multiformats/cid';
 
+// Get package version (works in both ESM and bundled CommonJS)
+let VERSION = '1.0.0'; // Fallback version
+try {
+  // Try to read from package.json (works when running from source)
+  const packageJsonPath = new URL('../package.json', import.meta.url);
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+  VERSION = packageJson.version;
+} catch (e) {
+  // Fallback for bundled version - version is hardcoded above
+}
+
 // Load environment variables
 dotenv.config();
 
@@ -56,6 +67,7 @@ function parseArgs(): {
   verbose: boolean;
   concurrency: number;
   showHelp: boolean;
+  showVersion: boolean;
 } {
   const args = process.argv.slice(2);
   let authchainResolve = false;
@@ -78,6 +90,7 @@ function parseArgs(): {
   let verbose = false;
   let concurrency = 50;
   let showHelp = false;
+  let showVersion = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -179,6 +192,8 @@ function parseArgs(): {
       }
       maxFileSizeMB = maxSizeValue;
       i++;
+    } else if (arg === '--version') {
+      showVersion = true;
     } else if (arg === '--help' || arg === '-h') {
       showHelp = true;
     } else {
@@ -209,6 +224,7 @@ function parseArgs(): {
     verbose,
     concurrency,
     showHelp,
+    showVersion,
   };
 }
 
@@ -244,6 +260,7 @@ Options:
   --clear-cache                 Delete cache before running
   --concurrency, -c <num>       Parallel query concurrency (1-200, default: 50)
   --verbose, -v                 Enable verbose logging for detailed diagnostics
+  --version                     Show version number
   --help, -h                    Show this help message
 
 Workflow Examples:
@@ -1168,6 +1185,12 @@ async function doFetchJson(options: {
 async function main(): Promise<void> {
   try {
     const args = parseArgs();
+
+    // Show version if requested
+    if (args.showVersion) {
+      console.log(`bch-ipfs-scrape v${VERSION}`);
+      process.exit(0);
+    }
 
     // Show help if requested or no commands specified
     if (args.showHelp || (!args.authchainResolve && !args.export && !args.exportBcmrIpfsCids && !args.exportCashtokenIpfsCids && !args.fetchJson && !args.ipfsPin)) {
