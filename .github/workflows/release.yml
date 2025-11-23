@@ -34,7 +34,7 @@ jobs:
       - name: Create binaries with pkg
         run: |
           npx pkg dist/bundled.cjs \
-            --targets node18-linux-x64,node18-linux-arm64 \
+            --targets node20-linux-x64,node20-linux-arm64 \
             --compress GZip \
             --output bin/bch-ipfs-scrape
 

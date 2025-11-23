@@ -4,7 +4,7 @@
  * Console application to resolve, export, and fetch Bitcoin Cash Metadata Registries
  */
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, statSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, statSync, readdirSync } from 'fs';
 import { getBCMRRegistries, fetchAndValidateRegistry } from './lib/bcmr.js';
 import { closeConnectionPool } from './lib/fulcrum-client.js';
 import * as dotenv from 'dotenv';
@@ -771,7 +771,6 @@ async function doExportCashtokenIPFSCIDs(options: {
   console.log(`Reading BCMR JSON files from ${jsonFolder}...`);
 
   // Read all .json files from folder (excluding cache files)
-  const { readdirSync } = await import('fs');
   const files = readdirSync(jsonFolder).filter(
     (f) => f.endsWith('.json') && !f.startsWith('.')
   );

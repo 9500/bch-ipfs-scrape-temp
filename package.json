@@ -11,15 +11,15 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
     "pkg": "npm run bundle && pkg dist/bundled.cjs --compress GZip",
-    "pkg:test": "npm run bundle && pkg dist/bundled.cjs --targets node18-linux-x64 --compress GZip --output test-binary"
+    "pkg:test": "npm run bundle && pkg dist/bundled.cjs --targets node20-linux-x64 --compress GZip --output test-binary"
   },
   "bin": {
     "bch-ipfs-scrape": "dist/index.js"
   },
   "pkg": {
     "targets": [
-      "node18-linux-x64",
-      "node18-linux-arm64"
+      "node20-linux-x64",
+      "node20-linux-arm64"
     ],
     "outputPath": "bin",
     "scripts": []
@@ -32,8 +32,8 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/ws": "^8.5.10",
+    "@yao-pkg/pkg": "^6.10.1",
     "esbuild": "^0.24.2",
-    "pkg": "^5.8.1",
     "typescript": "^5.3.3"
   }
 }
