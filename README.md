@@ -253,7 +253,7 @@ bch-ipfs-scrape --authchain-resolve \
 - IPFS daemon (optional, for `--ipfs-pin` command)
 
 **For building from source:**
-- Node.js 18+
+- Node.js 20+
 - All of the above
 
 ## Advanced Usage
