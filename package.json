@@ -1,14 +1,27 @@
 {
-  "name": "bcmr-ipfs-scraper",
+  "name": "bch-ipfs-scrape",
   "type": "module",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Console app to resolve, export, and fetch Bitcoin Cash Metadata Registry (BCMR) data from the blockchain",
   "main": "dist/index.js",
   "license": "MIT",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js"
+    "dev": "tsc && node dist/index.js",
+    "pkg": "npm run build && pkg dist/index.js --compress GZip",
+    "pkg:test": "npm run build && pkg dist/index.js --targets node18-linux-x64 --compress GZip --output test-binary"
+  },
+  "bin": {
+    "bch-ipfs-scrape": "dist/index.js"
+  },
+  "pkg": {
+    "targets": [
+      "node18-linux-x64",
+      "node18-linux-arm64"
+    ],
+    "outputPath": "bin",
+    "scripts": []
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -18,6 +31,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/ws": "^8.5.10",
+    "pkg": "^5.8.1",
     "typescript": "^5.3.3"
   }
 }

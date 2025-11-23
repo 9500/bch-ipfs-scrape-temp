@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Create binaries with pkg
+        run: |
+          npx pkg dist/index.js \
+            --targets node18-linux-x64,node18-linux-arm64 \
+            --compress GZip \
+            --output bin/bch-ipfs-scrape
+
+      - name: Rename binaries
+        run: |
+          mv bin/bch-ipfs-scrape-linux-x64 bin/bch-ipfs-scrape-linux-x64
+          mv bin/bch-ipfs-scrape-linux-arm64 bin/bch-ipfs-scrape-linux-arm64
+
+      - name: Make binaries executable
+        run: chmod +x bin/*
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            ## bch-ipfs-scrape ${{ github.ref_name }}
+
+            Standalone binaries for Linux (no Node.js required).
+
+            ### Downloads
+            - **Linux x64**: `bch-ipfs-scrape-linux-x64`
+            - **Linux ARM64**: `bch-ipfs-scrape-linux-arm64`
+
+            ### Installation
+            ```bash
+            # Download the binary for your architecture
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/bch-ipfs-scrape-linux-x64
+
+            # Make it executable
+            chmod +x bch-ipfs-scrape-linux-x64
+
+            # Optionally move to your PATH
+            sudo mv bch-ipfs-scrape-linux-x64 /usr/local/bin/bch-ipfs-scrape
+            ```
+
+            ### Usage
+            Run `./bch-ipfs-scrape-linux-x64` (or `bch-ipfs-scrape` if installed to PATH)
+
+            See [README](https://github.com/${{ github.repository }}) for full documentation.
+          draft: false
+          prerelease: false
+
+      - name: Upload Linux x64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/bch-ipfs-scrape-linux-x64
+          asset_name: bch-ipfs-scrape-linux-x64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux ARM64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/bch-ipfs-scrape-linux-arm64
+          asset_name: bch-ipfs-scrape-linux-arm64
+          asset_content_type: application/octet-stream
