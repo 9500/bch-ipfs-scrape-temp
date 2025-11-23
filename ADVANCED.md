@@ -67,13 +67,13 @@ The tool automatically caches authchain resolution results to avoid redundant bl
 **Enable/Disable:**
 ```bash
 # Use cache (default)
-npm start -- --authchain-resolve
+bch-ipfs-scrape --authchain-resolve
 
 # Disable cache (force full resolution)
-npm start -- --authchain-resolve --no-cache
+bch-ipfs-scrape --authchain-resolve --no-cache
 
 # Clear cache and start fresh
-npm start -- --authchain-resolve --clear-cache
+bch-ipfs-scrape --authchain-resolve --clear-cache
 ```
 
 **Cache Updates:**
@@ -86,7 +86,7 @@ npm start -- --authchain-resolve --clear-cache
 Run with `--verbose` to see detailed cache information:
 
 ```bash
-npm start -- --authchain-resolve --verbose
+bch-ipfs-scrape --authchain-resolve --verbose
 ```
 
 Example output:
@@ -361,7 +361,20 @@ JSON file containing:
 
 ## Development
 
-### Development Mode
+### Build Standalone Binary
+
+```bash
+# Build binary for testing (x64 only)
+npm run pkg:test
+./test-binary --help
+
+# Build binaries for distribution (x64 and arm64)
+npm run pkg
+./bin/bch-ipfs-scrape-linux-x64 --help
+./bin/bch-ipfs-scrape-linux-arm64 --help
+```
+
+### Development Mode (with Node.js)
 
 Run with automatic rebuild on changes:
 
@@ -369,7 +382,7 @@ Run with automatic rebuild on changes:
 npm run dev
 ```
 
-### Build Only
+### Build Only (TypeScript)
 
 ```bash
 npm run build
@@ -396,14 +409,14 @@ The tool can be tested with different data sources:
 
 ```bash
 # Test with custom Chaingraph endpoint
-CHAINGRAPH_URL=http://test-server:8088/v1/graphql npm start -- --authchain-resolve
+CHAINGRAPH_URL=http://test-server:8088/v1/graphql bch-ipfs-scrape --authchain-resolve
 
 # Test with different concurrency levels
-npm start -- --authchain-resolve --concurrency 10 --verbose
+bch-ipfs-scrape --authchain-resolve --concurrency 10 --verbose
 
 # Test cache behavior
-npm start -- --authchain-resolve --clear-cache --verbose
-npm start -- --authchain-resolve --verbose  # Should show cache hits
+bch-ipfs-scrape --authchain-resolve --clear-cache --verbose
+bch-ipfs-scrape --authchain-resolve --verbose  # Should show cache hits
 ```
 
 ## Troubleshooting
@@ -419,7 +432,7 @@ npm start -- --authchain-resolve --verbose  # Should show cache hits
 - Or use bash script which provides better error messages
 
 **Cache corruption**
-- Clear cache: `npm start -- --authchain-resolve --clear-cache`
+- Clear cache: `bch-ipfs-scrape --authchain-resolve --clear-cache`
 - Delete manually: `rm bcmr-registries/.authchain-cache.json`
 
 **Timeout errors during IPFS pinning**
@@ -437,8 +450,8 @@ npm start -- --authchain-resolve --verbose  # Should show cache hits
 Use `--verbose` flag for detailed diagnostic information:
 
 ```bash
-npm start -- --authchain-resolve --verbose
-npm start -- --ipfs-pin --verbose
+bch-ipfs-scrape --authchain-resolve --verbose
+bch-ipfs-scrape --ipfs-pin --verbose
 ```
 
 This shows:

@@ -219,7 +219,7 @@ function printUsage(): void {
   console.log(`
 BCMR Registry Tool
 
-Usage: npm start [command] [options]
+Usage: bch-ipfs-scrape [command] [options]
 
 Commands:
   --authchain-resolve           Resolve authchains and save to authhead.json
@@ -249,37 +249,37 @@ Options:
 Workflow Examples:
 
   1. Resolve authchains (creates authhead.json):
-     npm start -- --authchain-resolve
+     bch-ipfs-scrape --authchain-resolve
 
   2. Export IPFS URLs from authhead.json:
-     npm start -- --export IPFS
+     bch-ipfs-scrape --export IPFS
 
   3. Export multiple protocol types:
-     npm start -- --export IPFS,HTTPS --export-file all-urls.txt
+     bch-ipfs-scrape --export IPFS,HTTPS --export-file all-urls.txt
 
   4. Export IPFS CIDs from authhead.json (deduplicated and sorted):
-     npm start -- --export-bcmr-ipfs-cids
+     bch-ipfs-scrape --export-bcmr-ipfs-cids
 
   5. Extract IPFS CIDs from BCMR JSON files:
-     npm start -- --export-cashtoken-ipfs-cids
+     bch-ipfs-scrape --export-cashtoken-ipfs-cids
 
   6. Fetch BCMR JSON files:
-     npm start -- --fetch-json
+     bch-ipfs-scrape --fetch-json
 
   7. Pin IPFS CIDs using local IPFS daemon (pins from both CID files by default):
-     npm start -- --ipfs-pin
-     npm start -- --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt  # pin only BCMR CIDs
-     npm start -- --ipfs-pin --ipfs-pin-timeout 10
+     bch-ipfs-scrape --ipfs-pin
+     bch-ipfs-scrape --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt  # pin only BCMR CIDs
+     bch-ipfs-scrape --ipfs-pin --ipfs-pin-timeout 10
 
   8. Combined workflow (export and pin):
-     npm start -- --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
+     bch-ipfs-scrape --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 
   9. Combined workflow (all in one):
-     npm start -- --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
+     bch-ipfs-scrape --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 
   10. Custom authhead.json location:
-      npm start -- --authchain-resolve --authhead-file ./data/authhead.json
-      npm start -- --export IPFS --authhead-file ./data/authhead.json
+      bch-ipfs-scrape --authchain-resolve --authhead-file ./data/authhead.json
+      bch-ipfs-scrape --export IPFS --authhead-file ./data/authhead.json
 
 Protocol Filters:
   IPFS   - IPFS URIs (ipfs://)

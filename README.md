@@ -8,7 +8,38 @@ BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain
 
 ## Quick Start
 
-### Installation
+### Option 1: Download Pre-built Binary (Recommended)
+
+1. **Download the latest release:**
+   ```bash
+   # For x64 systems
+   wget https://github.com/9500/bch-ipfs-scrape/releases/latest/download/bch-ipfs-scrape-linux-x64
+   chmod +x bch-ipfs-scrape-linux-x64
+   sudo mv bch-ipfs-scrape-linux-x64 /usr/local/bin/bch-ipfs-scrape
+
+   # Or for ARM64 systems
+   wget https://github.com/9500/bch-ipfs-scrape/releases/latest/download/bch-ipfs-scrape-linux-arm64
+   chmod +x bch-ipfs-scrape-linux-arm64
+   sudo mv bch-ipfs-scrape-linux-arm64 /usr/local/bin/bch-ipfs-scrape
+   ```
+
+2. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Edit `.env` with your endpoints:**
+   ```
+   CHAINGRAPH_URL=http://your-chaingraph-server:8088/v1/graphql
+   FULCRUM_WS_URL=ws://your-fulcrum-server:50003
+   ```
+
+4. **Run the tool:**
+   ```bash
+   bch-ipfs-scrape --authchain-resolve
+   ```
+
+### Option 2: Build from Source
 
 1. **Clone the repository:**
    ```bash
@@ -24,28 +55,37 @@ BCMR (Bitcoin Cash Metadata Registry) is a specification for publishing on-chain
 3. **Configure environment:**
    ```bash
    cp .env.example .env
+   # Edit .env with your endpoints
    ```
 
-4. **Edit `.env` with your endpoints:**
+4. **Build standalone binary:**
+   ```bash
+   # Build binary for current system
+   npm run pkg:test
+   ./test-binary --authchain-resolve
+
+   # Or build for distribution (both x64 and arm64)
+   npm run pkg
+   ./bin/bch-ipfs-scrape-linux-x64 --authchain-resolve
    ```
-   CHAINGRAPH_URL=http://your-chaingraph-server:8088/v1/graphql
-   FULCRUM_WS_URL=ws://your-fulcrum-server:50003
+
+   **Alternatively, run with Node.js:**
+   ```bash
+   npm run build
+   npm start -- --authchain-resolve
    ```
 
 ### First Run
 
 ```bash
-# Build the project
-npm run build
-
 # Resolve authchains and create authhead.json
-npm start -- --authchain-resolve
+bch-ipfs-scrape --authchain-resolve
 
 # Export IPFS URLs
-npm start -- --export IPFS
+bch-ipfs-scrape --export IPFS
 
 # Fetch registry JSON files
-npm start -- --fetch-json
+bch-ipfs-scrape --fetch-json
 ```
 
 ## Features
@@ -65,7 +105,7 @@ npm start -- --fetch-json
 Fetch BCMR data and resolve authchains:
 
 ```bash
-npm start -- --authchain-resolve
+bch-ipfs-scrape --authchain-resolve
 ```
 
 Options:
@@ -80,13 +120,13 @@ Export URLs with protocol filtering:
 
 ```bash
 # Export IPFS URLs only
-npm start -- --export IPFS
+bch-ipfs-scrape --export IPFS
 
 # Export IPFS and HTTPS URLs
-npm start -- --export IPFS,HTTPS
+bch-ipfs-scrape --export IPFS,HTTPS
 
 # Export all URLs
-npm start -- --export ALL
+bch-ipfs-scrape --export ALL
 ```
 
 ### Export IPFS CIDs
@@ -94,7 +134,7 @@ npm start -- --export ALL
 Extract only IPFS CIDs (deduplicated and sorted):
 
 ```bash
-npm start -- --export-bcmr-ipfs-cids
+bch-ipfs-scrape --export-bcmr-ipfs-cids
 ```
 
 This extracts CIDs from:
@@ -108,7 +148,7 @@ This extracts CIDs from:
 Extract IPFS CIDs from BCMR JSON files:
 
 ```bash
-npm start -- --export-cashtoken-ipfs-cids
+bch-ipfs-scrape --export-cashtoken-ipfs-cids
 ```
 
 This recursively scans all BCMR JSON files and extracts CIDs from both `ipfs://` URLs and HTTPS gateway URLs.
@@ -118,7 +158,7 @@ This recursively scans all BCMR JSON files and extracts CIDs from both `ipfs://`
 Download and validate registry JSON files:
 
 ```bash
-npm start -- --fetch-json
+bch-ipfs-scrape --fetch-json
 ```
 
 ### Pin IPFS CIDs
@@ -127,13 +167,13 @@ Pin CIDs using local IPFS daemon (uses cache to skip already-pinned CIDs):
 
 ```bash
 # Pin from both default files (bcmr-ipfs-cids.txt and cashtoken-ipfs-cids.txt)
-npm start -- --ipfs-pin
+bch-ipfs-scrape --ipfs-pin
 
 # Pin CIDs from a single file
-npm start -- --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt
+bch-ipfs-scrape --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt
 
 # Custom timeout and concurrency (defaults: 5s timeout, 5 concurrent pins)
-npm start -- --ipfs-pin --ipfs-pin-timeout 10 --ipfs-pin-concurrency 10
+bch-ipfs-scrape --ipfs-pin --ipfs-pin-timeout 10 --ipfs-pin-concurrency 10
 ```
 
 Bash script alternative for sequential pinning:
@@ -150,7 +190,7 @@ Bash script alternative for sequential pinning:
 Resolve authchains, fetch JSON, export CIDs, and pin everything to IPFS:
 
 ```bash
-npm start -- --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
+bch-ipfs-scrape --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 ```
 
 This command:
@@ -165,7 +205,7 @@ This command:
 Use caching to quickly update (subsequent runs are much faster):
 
 ```bash
-npm start -- --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
+bch-ipfs-scrape --authchain-resolve --fetch-json --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 ```
 
 Cached components:
@@ -177,19 +217,19 @@ Cached components:
 Export and pin from both sources (pins both files by default):
 
 ```bash
-npm start -- --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
+bch-ipfs-scrape --export-bcmr-ipfs-cids --export-cashtoken-ipfs-cids --ipfs-pin
 ```
 
 Pin from a single file:
 
 ```bash
-npm start -- --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt
+bch-ipfs-scrape --ipfs-pin --ipfs-pin-file bcmr-ipfs-cids.txt
 ```
 
 ### Custom Output Files
 
 ```bash
-npm start -- --authchain-resolve \
+bch-ipfs-scrape --authchain-resolve \
   --export IPFS,HTTPS --export-file all-urls.txt \
   --export-bcmr-ipfs-cids --cids-file my-cids.txt
 ```
@@ -206,10 +246,15 @@ npm start -- --authchain-resolve \
 
 ## Requirements
 
-- Node.js 18+
+**For pre-built binary:**
+- Linux (x64 or ARM64)
 - Access to a Chaingraph server (GraphQL endpoint)
 - Access to a Fulcrum server (Electrum WebSocket endpoint)
 - IPFS daemon (optional, for `--ipfs-pin` command)
+
+**For building from source:**
+- Node.js 18+
+- All of the above
 
 ## Advanced Usage
 
