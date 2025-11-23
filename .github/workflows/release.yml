@@ -38,17 +38,14 @@ jobs:
             --compress GZip \
             --output bin/bch-ipfs-scrape
 
-      - name: Debug - List created files
+      - name: Rename binaries to match Linux naming convention
         run: |
-          echo "=== Files in current directory ==="
-          ls -lah
-          echo "=== Files in bin directory ==="
-          ls -lah bin/ || echo "bin directory does not exist or is empty"
-          echo "=== All bch-ipfs-scrape files ==="
-          find . -name "*bch-ipfs-scrape*" -type f
+          mv bin/bch-ipfs-scrape-x64 bin/bch-ipfs-scrape-linux-x64
+          mv bin/bch-ipfs-scrape-arm64 bin/bch-ipfs-scrape-linux-arm64
+          ls -lah bin/
 
       - name: Make binaries executable
-        run: chmod +x bin/* || true
+        run: chmod +x bin/*
 
       - name: Get version from tag
         id: get_version
