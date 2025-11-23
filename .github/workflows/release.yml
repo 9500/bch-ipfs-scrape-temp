@@ -28,17 +28,15 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
+      - name: Create bin directory
+        run: mkdir -p bin
+
       - name: Create binaries with pkg
         run: |
           npx pkg dist/index.js \
             --targets node18-linux-x64,node18-linux-arm64 \
             --compress GZip \
             --output bin/bch-ipfs-scrape
-
-      - name: Rename binaries
-        run: |
-          mv bin/bch-ipfs-scrape-linux-x64 bin/bch-ipfs-scrape-linux-x64
-          mv bin/bch-ipfs-scrape-linux-arm64 bin/bch-ipfs-scrape-linux-arm64
 
       - name: Make binaries executable
         run: chmod +x bin/*
